@@ -1,8 +1,8 @@
 ﻿package cat.daisy.command.context
 import cat.daisy.command.arguments.ArgParser
 import cat.daisy.command.arguments.ParseResult
-import cat.daisy.command.cooldown.CooldownManager
-import cat.daisy.command.text.TextUtils.mm
+import cat.daisy.command.cooldown.DaisyCooldowns
+import cat.daisy.command.text.DaisyText.mm
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Bukkit
@@ -101,7 +101,7 @@ class CommandContext(
         bypassPermission: String? = null,
     ): Boolean {
         val p = player ?: return false
-        return CooldownManager.isOnCooldown(p, command, seconds, bypassPermission)
+        return DaisyCooldowns.isOnCooldown(p, command, seconds, bypassPermission)
     }
 
     fun getCooldown(
@@ -109,7 +109,7 @@ class CommandContext(
         seconds: Int,
     ): Long {
         val p = player ?: return 0
-        return CooldownManager.getRemainingCooldown(p, command, seconds)
+        return DaisyCooldowns.getRemainingCooldown(p, command, seconds)
     }
 
     fun checkCooldown(
@@ -117,7 +117,7 @@ class CommandContext(
         seconds: Int,
     ): Long {
         val p = player ?: return 0
-        return CooldownManager.checkCooldown(p, command, seconds)
+        return DaisyCooldowns.checkCooldown(p, command, seconds)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -293,12 +293,12 @@ class PlayerContext(
         command: String,
         seconds: Int,
         bypassPermission: String? = null,
-    ): Boolean = CooldownManager.isOnCooldown(player, command, seconds, bypassPermission)
+    ): Boolean = DaisyCooldowns.isOnCooldown(player, command, seconds, bypassPermission)
 
     fun getCooldown(
         command: String,
         seconds: Int,
-    ): Long = CooldownManager.getRemainingCooldown(player, command, seconds)
+    ): Long = DaisyCooldowns.getRemainingCooldown(player, command, seconds)
 
     // ─────────────────────────────────────────────────────────────────────────
     // MINIMESSAGE RESPONSES

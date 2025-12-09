@@ -73,14 +73,14 @@ dependencies {
 ### Kotlin
 
 ```kotlin
-import cat.daisy.command.core.CommandFramework
+import cat.daisy.command.core.DaisyCommands
 import cat.daisy.command.dsl.daisyCommand
 import org.bukkit.plugin.java.JavaPlugin
 
 class MyPlugin : JavaPlugin() {
     override fun onEnable() {
         // Initialize the framework
-        CommandFramework.initialize(this)
+        DaisyCommands.initialize(this)
         
         // Register your commands
         registerCommands()
@@ -88,7 +88,7 @@ class MyPlugin : JavaPlugin() {
     
     override fun onDisable() {
         // Clean up
-        CommandFramework.shutdown()
+        DaisyCommands.shutdown()
     }
     
     private fun registerCommands() {
@@ -111,14 +111,14 @@ class MyPlugin : JavaPlugin() {
 
 ```java
 import cat.daisy.command.DaisyCommandAPI;
-import cat.daisy.command.core.CommandFramework;
+import cat.daisy.command.core.DaisyCommands;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public class MyPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         // Initialize the framework
-        CommandFramework.INSTANCE.initialize(this);
+        DaisyCommands.INSTANCE.initialize(this);
         
         // Register commands
         registerCommands();
@@ -127,7 +127,7 @@ public class MyPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         // Clean up
-        CommandFramework.INSTANCE.shutdown();
+        DaisyCommands.INSTANCE.shutdown();
     }
     
     private void registerCommands() {
@@ -451,13 +451,13 @@ onExecute {
 }
 ```
 
-## 🎨 TextUtils
+## 🎨 DaisyText
 
 MiniMessage utilities available throughout your code:
 
 ```kotlin
-import cat.daisy.command.text.TextUtils.mm
-import cat.daisy.command.text.TextUtils.Colors
+import cat.daisy.command.text.DaisyText.mm
+import cat.daisy.command.text.DaisyText.Colors
 
 // Parse MiniMessage to Component
 val component = "<gradient:red:blue>Hello World!</gradient>".mm()
@@ -535,7 +535,7 @@ daisyCommand("admin") {
 class MyPlugin : JavaPlugin() {
     override fun onEnable() {
         // Initialize FIRST
-        CommandFramework.initialize(this)
+        DaisyCommands.initialize(this)
         
         // Then register commands
         registerCommands()
@@ -543,7 +543,7 @@ class MyPlugin : JavaPlugin() {
     
     override fun onDisable() {
         // Cleanup - unregisters all commands and clears cooldowns
-        CommandFramework.shutdown()
+        DaisyCommands.shutdown()
     }
 }
 ```
@@ -555,18 +555,18 @@ class MyPlugin : JavaPlugin() {
 val cmd = buildCommand("dynamic") {
     onExecute { success("Dynamic command!") }
 }
-CommandFramework.register(cmd)
+DaisyCommands.register(cmd)
 
 // Unregister specific command
-CommandFramework.unregister("dynamic")
+DaisyCommands.unregister("dynamic")
 
 // Check if registered
-if (CommandFramework.isRegistered("hello")) {
+if (DaisyCommands.isRegistered("hello")) {
     // ...
 }
 
 // Get all commands
-val allCommands = CommandFramework.getAll()
+val allCommands = DaisyCommands.getAll()
 ```
 
 ## 📋 Requirements

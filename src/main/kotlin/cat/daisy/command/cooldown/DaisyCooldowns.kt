@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
  * - Cooldown bypass permissions
  * - Remaining time queries
  */
-object CooldownManager {
+object DaisyCooldowns {
     private val cooldowns = ConcurrentHashMap<UUID, ConcurrentHashMap<String, Long>>()
     private val globalCooldowns = ConcurrentHashMap<String, Long>()
     // ═══════════════════════════════════════════════════════════════════════════════

@@ -9,14 +9,14 @@ import cat.daisy.command.arguments.Parsers
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.PlayerContext
 import cat.daisy.command.context.TabContext
-import cat.daisy.command.cooldown.CooldownManager
-import cat.daisy.command.core.CommandFramework
+import cat.daisy.command.cooldown.DaisyCooldowns
+import cat.daisy.command.core.DaisyCommands
 import cat.daisy.command.core.SubCommand
 import cat.daisy.command.dsl.DaisyCommandBuilder
 import cat.daisy.command.dsl.SubCommandBuilder
 import cat.daisy.command.dsl.buildCommand
 import cat.daisy.command.dsl.daisyCommand
-import cat.daisy.command.text.TextUtils
+import cat.daisy.command.text.DaisyText
 
 /**
  * # DaisyCommand - Modern Kotlin Command Framework for Paper/Spigot
@@ -36,7 +36,7 @@ import cat.daisy.command.text.TextUtils
  * ```kotlin
  * class MyPlugin : JavaPlugin() {
  *     override fun onEnable() {
- *         CommandFramework.initialize(this)
+ *         DaisyCommands.initialize(this)
  *
  *         daisyCommand("greet") {
  *             description = "Greet a player"
@@ -51,7 +51,7 @@ import cat.daisy.command.text.TextUtils
  *     }
  *
  *     override fun onDisable() {
- *         CommandFramework.shutdown()
+ *         DaisyCommands.shutdown()
  *     }
  * }
  * ```
@@ -61,7 +61,7 @@ import cat.daisy.command.text.TextUtils
  * public class MyPlugin extends JavaPlugin {
  *     @Override
  *     public void onEnable() {
- *         CommandFramework.INSTANCE.initialize(this);
+ *         DaisyCommands.INSTANCE.initialize(this);
  *
  *         DaisyCommand.create("greet", builder -> {
  *             builder.setDescription("Greet a player");
@@ -75,14 +75,14 @@ import cat.daisy.command.text.TextUtils
  *
  *     @Override
  *     public void onDisable() {
- *         CommandFramework.INSTANCE.shutdown();
+ *         DaisyCommands.INSTANCE.shutdown();
  *     }
  * }
  * ```
  *
  * @author Daisy
  * @version 1.0.0
- * @see CommandFramework
+ * @see DaisyCommands
  * @see daisyCommand
  */
 object DaisyCommandAPI {
@@ -103,7 +103,7 @@ object DaisyCommandAPI {
         val builder = DaisyCommandBuilder(name)
         configure.accept(builder)
         val command = builder.build()
-        CommandFramework.register(command)
+        DaisyCommands.register(command)
         return command
     }
 

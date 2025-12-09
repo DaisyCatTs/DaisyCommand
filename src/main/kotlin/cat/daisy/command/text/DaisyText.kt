@@ -6,7 +6,7 @@ import org.bukkit.Bukkit
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-object TextUtils {
+object DaisyText {
     private val miniMessage = MiniMessage.miniMessage()
     private val logFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     private val legacyColorRegex = """&([0-9a-fk-or])""".toRegex()
