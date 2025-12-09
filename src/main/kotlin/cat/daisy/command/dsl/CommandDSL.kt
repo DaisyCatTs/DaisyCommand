@@ -4,8 +4,8 @@ import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.PlayerContext
 import cat.daisy.command.context.TabContext
-import cat.daisy.command.core.CommandFramework
 import cat.daisy.command.core.DaisyCommand
+import cat.daisy.command.core.DaisyCommands
 import cat.daisy.command.core.SubCommand
 import cat.daisy.command.core.SubCommandData
 
@@ -21,7 +21,7 @@ import cat.daisy.command.core.SubCommandData
 inline fun daisyCommand(
     name: String,
     block: DaisyCommandBuilder.() -> Unit,
-): DaisyCommand = DaisyCommandBuilder(name).apply(block).build().also { CommandFramework.register(it) }
+): DaisyCommand = DaisyCommandBuilder(name).apply(block).build().also { DaisyCommands.register(it) }
 
 inline fun buildCommand(
     name: String,

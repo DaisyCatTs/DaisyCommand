@@ -2,8 +2,8 @@
 import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.TabContext
-import cat.daisy.command.cooldown.CooldownManager
-import cat.daisy.command.text.TextUtils.mm
+import cat.daisy.command.cooldown.DaisyCooldowns
+import cat.daisy.command.text.DaisyText.mm
 import org.bukkit.Bukkit
 import org.bukkit.GameMode
 import org.bukkit.Material
@@ -67,7 +67,7 @@ class SubCommand(
             return true
         }
         if (cooldown > 0 && sender is Player) {
-            val remaining = CooldownManager.getRemainingCooldown(sender, name, cooldown)
+            val remaining = DaisyCooldowns.getRemainingCooldown(sender, name, cooldown)
             if (remaining > 0 && (cooldownBypassPermission == null || !sender.hasPermission(cooldownBypassPermission))) {
                 val msg = cooldownMessage ?: "<#e74c3c>✖</> <gray>Please wait <white>$remaining</white> seconds."
                 sender.sendMessage(msg.mm())

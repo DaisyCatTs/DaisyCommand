@@ -2,8 +2,8 @@
 import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.TabContext
-import cat.daisy.command.cooldown.CooldownManager
-import cat.daisy.command.text.TextUtils.mm
+import cat.daisy.command.cooldown.DaisyCooldowns
+import cat.daisy.command.text.DaisyText.mm
 import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandMap
@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
  * - Nested subcommands support
  * - Automatic help generation
  */
-object CommandFramework {
+object DaisyCommands {
     private val commands = ConcurrentHashMap<String, DaisyCommand>()
     private var commandMap: CommandMap? = null
     private var pluginInstance: JavaPlugin? = null
@@ -55,7 +55,7 @@ object CommandFramework {
      */
     fun register(command: DaisyCommand) {
         val map =
-            commandMap ?: throw IllegalStateException("CommandFramework not initialized! Call CommandFramework.initialize(plugin) first.")
+            commandMap ?: throw IllegalStateException("DaisyCommands not initialized! Call DaisyCommands.initialize(plugin) first.")
         val wrapper = BukkitCommandWrapper(command)
         map.register(pluginName, wrapper)
         commands[command.name.lowercase()] = command
@@ -115,7 +115,7 @@ object CommandFramework {
      */
     fun shutdown() {
         unregisterAll()
-        CooldownManager.clearAll()
+        DaisyCooldowns.clearAll()
         commandMap = null
         pluginInstance = null
     }
@@ -217,7 +217,7 @@ class DaisyCommand(
         }
         // Cooldown check
         if (cooldown > 0 && sender is Player) {
-            val remaining = CooldownManager.getRemainingCooldown(sender, name, cooldown)
+            val remaining = DaisyCooldowns.getRemainingCooldown(sender, name, cooldown)
             if (remaining > 0 && (cooldownBypassPermission == null || !sender.hasPermission(cooldownBypassPermission))) {
                 val msg = cooldownMessage ?: "<#e74c3c>✖</> <gray>Please wait <white>$remaining</white> seconds before using this again."
                 sender.sendMessage(msg.mm())
