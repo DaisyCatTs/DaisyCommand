@@ -1,22 +1,14 @@
 @file:JvmName("DaisyCommand")
+@file:Suppress("unused")
 
 package cat.daisy.command
 
-import cat.daisy.command.arguments.ArgParser
-import cat.daisy.command.arguments.ArgumentDef
-import cat.daisy.command.arguments.ParseResult
-import cat.daisy.command.arguments.Parsers
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.PlayerContext
 import cat.daisy.command.context.TabContext
-import cat.daisy.command.cooldown.DaisyCooldowns
 import cat.daisy.command.core.DaisyCommands
 import cat.daisy.command.core.SubCommand
 import cat.daisy.command.dsl.DaisyCommandBuilder
-import cat.daisy.command.dsl.SubCommandBuilder
-import cat.daisy.command.dsl.buildCommand
-import cat.daisy.command.dsl.daisyCommand
-import cat.daisy.command.text.DaisyText
 
 /**
  * # DaisyCommand - Modern Kotlin Command Framework for Paper/Spigot
@@ -63,7 +55,7 @@ import cat.daisy.command.text.DaisyText
  *     public void onEnable() {
  *         DaisyCommands.INSTANCE.initialize(this);
  *
- *         DaisyCommand.create("greet", builder -> {
+ *         DaisyCommandAPI.create("greet", builder -> {
  *             builder.setDescription("Greet a player");
  *             builder.setPermission("myplugin.greet");
  *             builder.playerArgument("target", false);
@@ -83,7 +75,6 @@ import cat.daisy.command.text.DaisyText
  * @author Daisy
  * @version 1.0.0
  * @see DaisyCommands
- * @see daisyCommand
  */
 object DaisyCommandAPI {
     /** Current library version */

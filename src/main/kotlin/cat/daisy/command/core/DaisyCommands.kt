@@ -1,10 +1,12 @@
-﻿package cat.daisy.command.core
+﻿@file:Suppress("unused")
+
+package cat.daisy.command.core
+
 import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.TabContext
 import cat.daisy.command.cooldown.DaisyCooldowns
 import cat.daisy.command.text.DaisyText.mm
-import org.bukkit.Bukkit
 import org.bukkit.command.Command
 import org.bukkit.command.CommandMap
 import org.bukkit.command.CommandSender
@@ -27,6 +29,7 @@ object DaisyCommands {
     private var commandMap: CommandMap? = null
     private var pluginInstance: JavaPlugin? = null
     private var pluginName: String = "daisycommand"
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // INITIALIZATION
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -46,6 +49,7 @@ object DaisyCommands {
             isAccessible = true
             get(plugin.server) as CommandMap
         }
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // REGISTRATION
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -55,7 +59,8 @@ object DaisyCommands {
      */
     fun register(command: DaisyCommand) {
         val map =
-            commandMap ?: throw IllegalStateException("DaisyCommands not initialized! Call DaisyCommands.initialize(plugin) first.")
+            commandMap
+                ?: throw IllegalStateException("DaisyCommands not initialized! Call DaisyCommands.initialize(plugin) first.")
         val wrapper = BukkitCommandWrapper(command)
         map.register(pluginName, wrapper)
         commands[command.name.lowercase()] = command
@@ -120,6 +125,7 @@ object DaisyCommands {
         pluginInstance = null
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // BUKKIT WRAPPER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -149,6 +155,7 @@ private class BukkitCommandWrapper(
         args: Array<out String>,
     ): List<String> = command.tabComplete(sender, args.toList())
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DAISY COMMAND
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -175,6 +182,7 @@ class DaisyCommand(
     // ─────────────────────────────────────────────────────────────────────────
     // CONFIGURATION
     // ─────────────────────────────────────────────────────────────────────────
+
     fun addSubcommand(
         name: String,
         subcommand: SubCommand,
@@ -200,6 +208,7 @@ class DaisyCommand(
     // ─────────────────────────────────────────────────────────────────────────
     // EXECUTION
     // ─────────────────────────────────────────────────────────────────────────
+
     fun execute(
         sender: CommandSender,
         args: List<String>,
@@ -207,23 +216,28 @@ class DaisyCommand(
     ): Boolean {
         // Player-only check
         if (playerOnly && sender !is Player) {
-            sender.sendMessage("<#e74c3c>✖</> <gray>This command can only be used by players!".mm())
+            sender.sendMessage("<#e74c3c>✖ <gray>This command can only be used by players!".mm())
             return true
         }
+
         // Permission check
         if (permission != null && !sender.hasPermission(permission)) {
-            sender.sendMessage("<#e74c3c>✖</> <gray>You don't have permission to use this command!".mm())
+            sender.sendMessage("<#e74c3c>✖ <gray>You don't have permission to use this command!".mm())
             return true
         }
+
         // Cooldown check
         if (cooldown > 0 && sender is Player) {
             val remaining = DaisyCooldowns.getRemainingCooldown(sender, name, cooldown)
             if (remaining > 0 && (cooldownBypassPermission == null || !sender.hasPermission(cooldownBypassPermission))) {
-                val msg = cooldownMessage ?: "<#e74c3c>✖</> <gray>Please wait <white>$remaining</white> seconds before using this again."
+                val msg =
+                    cooldownMessage
+                        ?: "<#e74c3c>✖ <gray>Please wait <white>$remaining</white> seconds before using this again."
                 sender.sendMessage(msg.mm())
                 return true
             }
         }
+
         // Try subcommand first
         if (args.isNotEmpty()) {
             val subName = args[0].lowercase()
@@ -231,13 +245,16 @@ class DaisyCommand(
                 return sub.execute(sender, args.drop(1), label)
             }
         }
+
         // Parse named arguments
         val namedArgs = parseArguments(args, arguments)
+
         // Execute main handler or show help
         executor?.let {
             CommandContext(sender, args, namedArgs, label).it()
             return true
         }
+
         // No handler, show subcommands if available
         if (subcommands.isNotEmpty()) {
             sendHelp(sender)
@@ -252,6 +269,7 @@ class DaisyCommand(
         if (permission != null && !sender.hasPermission(permission)) {
             return emptyList()
         }
+
         return when {
             args.size == 1 -> {
                 val prefix = args[0].lowercase()
@@ -262,12 +280,14 @@ class DaisyCommand(
                         .map { it.key }
                         .distinct()
                         .toList()
+
                 val argSuggestions =
                     if (arguments.isNotEmpty()) {
                         getArgumentCompletions(0, args[0], arguments, sender)
                     } else {
                         emptyList()
                     }
+
                 val customSuggestions = tabProvider?.let { TabContext(sender, args).it() } ?: emptyList()
                 (subSuggestions + argSuggestions + customSuggestions).distinct()
             }
@@ -287,10 +307,12 @@ class DaisyCommand(
 
     private fun sendHelp(sender: CommandSender) {
         sender.sendMessage("<#3498db>━━━━━━━━━━ <white><bold>$name</bold></white> <#3498db>━━━━━━━━━━".mm())
+
         val visibleSubs =
             subcommands.entries
                 .filter { it.value.hasPermission(sender) }
                 .distinctBy { it.value }
+
         if (visibleSubs.isEmpty()) {
             sender.sendMessage("<gray>No available commands.".mm())
         } else {
@@ -298,6 +320,7 @@ class DaisyCommand(
                 sender.sendMessage("<#f1c40f>/$name $subName <dark_gray>- <gray>${sub.description}".mm())
             }
         }
+
         sender.sendMessage("<#3498db>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".mm())
     }
 }

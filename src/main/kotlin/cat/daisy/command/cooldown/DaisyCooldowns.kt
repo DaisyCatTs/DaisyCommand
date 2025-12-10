@@ -1,4 +1,7 @@
-﻿package cat.daisy.command.cooldown
+﻿@file:Suppress("unused")
+
+package cat.daisy.command.cooldown
+
 import org.bukkit.entity.Player
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -17,6 +20,7 @@ import java.util.concurrent.TimeUnit
 object DaisyCooldowns {
     private val cooldowns = ConcurrentHashMap<UUID, ConcurrentHashMap<String, Long>>()
     private val globalCooldowns = ConcurrentHashMap<String, Long>()
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // PLAYER COOLDOWNS
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -35,6 +39,7 @@ object DaisyCooldowns {
         val lastUsage = playerCooldowns[command] ?: 0L
         val currentTime = System.currentTimeMillis()
         val cooldownMillis = TimeUnit.SECONDS.toMillis(cooldownSeconds.toLong())
+
         return if (currentTime - lastUsage < cooldownMillis) {
             (lastUsage + cooldownMillis - currentTime) / 1000
         } else {
@@ -55,6 +60,7 @@ object DaisyCooldowns {
         val lastUsage = playerCooldowns[command] ?: return 0L
         val currentTime = System.currentTimeMillis()
         val cooldownMillis = TimeUnit.SECONDS.toMillis(cooldownSeconds.toLong())
+
         return if (currentTime - lastUsage < cooldownMillis) {
             (lastUsage + cooldownMillis - currentTime) / 1000
         } else {
@@ -111,6 +117,7 @@ object DaisyCooldowns {
     fun clearAll() {
         cooldowns.clear()
     }
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // GLOBAL COOLDOWNS
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,6 +132,7 @@ object DaisyCooldowns {
         val lastUsage = globalCooldowns[key] ?: 0L
         val currentTime = System.currentTimeMillis()
         val cooldownMillis = TimeUnit.SECONDS.toMillis(cooldownSeconds.toLong())
+
         return if (currentTime - lastUsage < cooldownMillis) {
             (lastUsage + cooldownMillis - currentTime) / 1000
         } else {
@@ -154,6 +162,7 @@ object DaisyCooldowns {
     fun clearGlobalCooldowns() {
         globalCooldowns.clear()
     }
+
     // ═══════════════════════════════════════════════════════════════════════════════
     // FORMATTING UTILITIES
     // ═══════════════════════════════════════════════════════════════════════════════

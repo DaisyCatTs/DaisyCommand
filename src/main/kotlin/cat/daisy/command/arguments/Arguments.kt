@@ -1,4 +1,7 @@
-﻿package cat.daisy.command.arguments
+﻿@file:Suppress("unused")
+
+package cat.daisy.command.arguments
+
 import org.bukkit.Bukkit
 import org.bukkit.GameMode
 import org.bukkit.Material
@@ -8,15 +11,6 @@ import org.bukkit.entity.EntityType
 import org.bukkit.entity.Player
 import java.time.Duration
 import java.util.UUID
-
-// DaisyCommand Argument System
-//
-// Type-safe argument parsing with:
-// - Sealed result types for clean error handling
-// - Built-in parsers for common Bukkit types
-// - Tab completion support
-// - Validation and range checking
-// - Input sanitization for security
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -82,6 +76,7 @@ sealed class ParseResult<out T> {
         fun failure(error: String): ParseResult<Nothing> = Failure(error)
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ARGUMENT DEFINITION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -194,6 +189,7 @@ sealed class ArgumentDef(
         optional: Boolean = false,
     ) : ArgumentDef(name, optional)
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ARGUMENT PARSER INTERFACE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -206,6 +202,7 @@ interface ArgParser<T> {
 
     fun complete(input: String): List<String> = emptyList()
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // BUILT-IN PARSERS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -217,6 +214,7 @@ object Parsers {
     // ─────────────────────────────────────────────────────────────────────────
     // PRIMITIVES
     // ─────────────────────────────────────────────────────────────────────────
+
     val STRING =
         object : ArgParser<String> {
             override fun parse(input: String): ParseResult<String> {
@@ -243,7 +241,9 @@ object Parsers {
         max: Int = Int.MAX_VALUE,
     ) = object : ArgParser<Int> {
         override fun parse(input: String): ParseResult<Int> {
-            val value = input.toIntOrNull() ?: return ParseResult.failure("'$input' is not a valid number")
+            val value =
+                input.toIntOrNull()
+                    ?: return ParseResult.failure("'$input' is not a valid number")
             return if (value in min..max) {
                 ParseResult.success(value)
             } else {
@@ -259,7 +259,9 @@ object Parsers {
         max: Long = Long.MAX_VALUE,
     ) = object : ArgParser<Long> {
         override fun parse(input: String): ParseResult<Long> {
-            val value = input.toLongOrNull() ?: return ParseResult.failure("'$input' is not a valid number")
+            val value =
+                input.toLongOrNull()
+                    ?: return ParseResult.failure("'$input' is not a valid number")
             return if (value in min..max) {
                 ParseResult.success(value)
             } else {
@@ -273,7 +275,9 @@ object Parsers {
         max: Double = Double.MAX_VALUE,
     ) = object : ArgParser<Double> {
         override fun parse(input: String): ParseResult<Double> {
-            val value = input.toDoubleOrNull() ?: return ParseResult.failure("'$input' is not a valid decimal")
+            val value =
+                input.toDoubleOrNull()
+                    ?: return ParseResult.failure("'$input' is not a valid decimal")
             return if (value in min..max) {
                 ParseResult.success(value)
             } else {
@@ -287,7 +291,9 @@ object Parsers {
         max: Float = Float.MAX_VALUE,
     ) = object : ArgParser<Float> {
         override fun parse(input: String): ParseResult<Float> {
-            val value = input.toFloatOrNull() ?: return ParseResult.failure("'$input' is not a valid decimal")
+            val value =
+                input.toFloatOrNull()
+                    ?: return ParseResult.failure("'$input' is not a valid decimal")
             return if (value in min..max) {
                 ParseResult.success(value)
             } else {
@@ -316,6 +322,7 @@ object Parsers {
     // ─────────────────────────────────────────────────────────────────────────
     // BUKKIT TYPES
     // ─────────────────────────────────────────────────────────────────────────
+
     val PLAYER =
         object : ArgParser<Player> {
             override fun parse(input: String): ParseResult<Player> =
@@ -330,6 +337,7 @@ object Parsers {
                     .filter { it.startsWith(input, ignoreCase = true) }
                     .toList()
         }
+
     val OFFLINE_PLAYER =
         object : ArgParser<OfflinePlayer> {
             override fun parse(input: String): ParseResult<OfflinePlayer> {
@@ -344,6 +352,7 @@ object Parsers {
 
             override fun complete(input: String) = PLAYER.complete(input)
         }
+
     val WORLD =
         object : ArgParser<World> {
             override fun parse(input: String): ParseResult<World> =
@@ -358,6 +367,7 @@ object Parsers {
                     .filter { it.startsWith(input, ignoreCase = true) }
                     .toList()
         }
+
     val MATERIAL =
         object : ArgParser<Material> {
             override fun parse(input: String): ParseResult<Material> =
@@ -374,6 +384,7 @@ object Parsers {
                     .toList()
             }
         }
+
     val GAMEMODE =
         object : ArgParser<GameMode> {
             override fun parse(input: String): ParseResult<GameMode> =
@@ -387,6 +398,7 @@ object Parsers {
                     .map { it.name.lowercase() }
                     .filter { it.startsWith(input.lowercase()) }
         }
+
     val ENTITY_TYPE =
         object : ArgParser<EntityType> {
             override fun parse(input: String): ParseResult<EntityType> =
@@ -402,6 +414,7 @@ object Parsers {
                     .filter { it.startsWith(input.lowercase()) }
                     .take(30)
         }
+
     val UUID_PARSER =
         object : ArgParser<UUID> {
             override fun parse(input: String): ParseResult<UUID> =
@@ -427,9 +440,11 @@ object Parsers {
                 val hours = match.groupValues[2].toLongOrNull() ?: 0
                 val minutes = match.groupValues[3].toLongOrNull() ?: 0
                 val seconds = match.groupValues[4].toLongOrNull() ?: 0
+
                 if (days == 0L && hours == 0L && minutes == 0L && seconds == 0L) {
                     return ParseResult.failure("Invalid duration. Use formats like: 1d, 2h, 30m, 45s")
                 }
+
                 return ParseResult.success(
                     Duration
                         .ofDays(days)
@@ -441,6 +456,7 @@ object Parsers {
 
             override fun complete(input: String) = listOf("1h", "30m", "1d", "12h", "7d")
         }
+
     // ─────────────────────────────────────────────────────────────────────────
     // GENERIC PARSERS
     // ─────────────────────────────────────────────────────────────────────────

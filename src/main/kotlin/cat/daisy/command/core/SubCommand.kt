@@ -1,4 +1,7 @@
-﻿package cat.daisy.command.core
+﻿@file:Suppress("unused")
+
+package cat.daisy.command.core
+
 import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.TabContext
@@ -59,21 +62,24 @@ class SubCommand(
         label: String = "",
     ): Boolean {
         if (playerOnly && sender !is Player) {
-            sender.sendMessage("<#e74c3c>✖</> <gray>This command can only be used by players!".mm())
+            sender.sendMessage("<#e74c3c>✖ <gray>This command can only be used by players!".mm())
             return true
         }
+
         if (!hasPermission(sender)) {
-            sender.sendMessage("<#e74c3c>✖</> <gray>You don't have permission to use this command!".mm())
+            sender.sendMessage("<#e74c3c>✖ <gray>You don't have permission to use this command!".mm())
             return true
         }
+
         if (cooldown > 0 && sender is Player) {
             val remaining = DaisyCooldowns.getRemainingCooldown(sender, name, cooldown)
             if (remaining > 0 && (cooldownBypassPermission == null || !sender.hasPermission(cooldownBypassPermission))) {
-                val msg = cooldownMessage ?: "<#e74c3c>✖</> <gray>Please wait <white>$remaining</white> seconds."
+                val msg = cooldownMessage ?: "<#e74c3c>✖ <gray>Please wait <white>$remaining</white> seconds."
                 sender.sendMessage(msg.mm())
                 return true
             }
         }
+
         // Check for nested subcommands
         if (args.isNotEmpty() && subcommands.isNotEmpty()) {
             val subName = args[0].lowercase()
@@ -81,6 +87,7 @@ class SubCommand(
                 return sub.execute(sender, args.drop(1), label)
             }
         }
+
         val namedArgs = parseArguments(args, arguments)
         CommandContext(sender, args, namedArgs, label).executor()
         return true
@@ -91,6 +98,7 @@ class SubCommand(
         args: List<String>,
     ): List<String> {
         if (!hasPermission(sender)) return emptyList()
+
         if (subcommands.isNotEmpty()) {
             if (args.size == 1) {
                 val prefix = args[0].lowercase()
@@ -109,6 +117,7 @@ class SubCommand(
                 }
             }
         }
+
         val argCompletions = getArgumentCompletions(args.size - 1, args.lastOrNull() ?: "", arguments, sender)
         return tabProvider?.let { TabContext(sender, args).it() + argCompletions } ?: argCompletions
     }
@@ -133,6 +142,7 @@ data class SubCommandData(
     val executor: CommandContext.() -> Unit,
     val tabProvider: (TabContext.() -> List<String>)?,
 )
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ARGUMENT PARSING UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -150,6 +160,7 @@ internal fun parseArguments(
 ): Map<String, Any> {
     val result = mutableMapOf<String, Any>()
     var argIndex = 0
+
     for (def in definitions) {
         when (def) {
             is ArgumentDef.StringArg -> {
@@ -264,6 +275,7 @@ internal fun parseArguments(
                     try {
                         result[def.name] = java.util.UUID.fromString(value)
                     } catch (_: Exception) {
+                        // Invalid UUID, skip
                     }
                 }
                 argIndex++
@@ -326,12 +338,11 @@ private fun parseDuration(input: String): java.time.Duration? {
 /**
  * Get tab completions for argument position.
  */
-@Suppress("UNUSED_PARAMETER")
 internal fun getArgumentCompletions(
     index: Int,
     current: String,
     definitions: List<ArgumentDef>,
-    sender: CommandSender,
+    @Suppress("UNUSED_PARAMETER") sender: CommandSender,
 ): List<String> {
     val def = definitions.getOrNull(index) ?: return emptyList()
     return when (def) {
