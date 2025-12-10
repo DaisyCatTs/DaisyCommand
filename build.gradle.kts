@@ -74,10 +74,12 @@ tasks {
         args("-F", "**/src/**/*.kt", "**.kts", "!**/build/**")
     }
 
+    val jarDir = layout.projectDirectory.dir("Jar")
+    val projectVersion = version.toString()
+
     register<Copy>("copyToJar") {
-        val projectVersion = version.toString()
         from(jar)
-        into(layout.projectDirectory.dir("Jar"))
+        into(jarDir)
         rename { "DaisyCommand-$projectVersion.jar" }
     }
 

@@ -1,4 +1,7 @@
-﻿package cat.daisy.command.context
+﻿@file:Suppress("unused")
+
+package cat.daisy.command.context
+
 import cat.daisy.command.arguments.ArgParser
 import cat.daisy.command.arguments.ParseResult
 import cat.daisy.command.cooldown.DaisyCooldowns
@@ -10,14 +13,6 @@ import org.bukkit.Sound
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 import java.time.Duration
-
-// DaisyCommand Context Classes
-//
-// Rich execution contexts with:
-// - MiniMessage messaging
-// - Cooldown utilities
-// - Player-specific features (sounds, titles, action bars)
-// - Type-safe argument access
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND CONTEXT
@@ -40,6 +35,7 @@ class CommandContext(
     // ─────────────────────────────────────────────────────────────────────────
     // NAMED ARGUMENT ACCESS
     // ─────────────────────────────────────────────────────────────────────────
+
     operator fun get(key: String): Any? = namedArgs[key]
 
     @Suppress("UNCHECKED_CAST")
@@ -62,6 +58,7 @@ class CommandContext(
     // ─────────────────────────────────────────────────────────────────────────
     // POSITIONAL ARGUMENT ACCESS
     // ─────────────────────────────────────────────────────────────────────────
+
     fun arg(index: Int): String? = args.getOrNull(index)
 
     fun argOr(
@@ -95,6 +92,7 @@ class CommandContext(
     // ─────────────────────────────────────────────────────────────────────────
     // COOLDOWN UTILITIES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun isOnCooldown(
         command: String,
         seconds: Int,
@@ -123,25 +121,27 @@ class CommandContext(
     // ─────────────────────────────────────────────────────────────────────────
     // MINIMESSAGE RESPONSES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun send(message: String) = sender.sendMessage(message.mm())
 
     fun send(component: Component) = sender.sendMessage(component)
 
-    fun reply(message: String) = send("<gray>» </gray>$message")
+    fun reply(message: String) = send("<gray>» $message")
 
-    fun success(message: String) = send("<#2ecc71>✔</> <gray>$message")
+    fun success(message: String) = send("<#2ecc71>✔ <gray>$message")
 
-    fun error(message: String) = send("<#e74c3c>✖</> <gray>$message")
+    fun error(message: String) = send("<#e74c3c>✖ <gray>$message")
 
-    fun warn(message: String) = send("<#f1c40f>⚠</> <gray>$message")
+    fun warn(message: String) = send("<#f1c40f>⚠ <gray>$message")
 
-    fun info(message: String) = send("<#3498db>✦</> <gray>$message")
+    fun info(message: String) = send("<#3498db>✦ <gray>$message")
 
-    fun broadcast(message: String) = Bukkit.broadcast("<#9b59b6>»</> $message".mm())
+    fun broadcast(message: String) = Bukkit.broadcast("<#9b59b6>» <white>$message".mm())
 
     // ─────────────────────────────────────────────────────────────────────────
     // PLAYER UTILITIES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun asPlayer(): Player? =
         player ?: run {
             error("This command requires a player!")
@@ -212,6 +212,7 @@ class CommandContext(
     // ─────────────────────────────────────────────────────────────────────────
     // PARSER INTEGRATION
     // ─────────────────────────────────────────────────────────────────────────
+
     fun <T> parse(
         index: Int,
         parser: ArgParser<T>,
@@ -228,6 +229,7 @@ class CommandContext(
         parse(index, parser).onSuccess(block).onFailure { error(it) }
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PLAYER CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -247,6 +249,7 @@ class PlayerContext(
     // ─────────────────────────────────────────────────────────────────────────
     // NAMED ARGUMENT ACCESS
     // ─────────────────────────────────────────────────────────────────────────
+
     operator fun get(key: String): Any? = namedArgs[key]
 
     @Suppress("UNCHECKED_CAST")
@@ -267,6 +270,7 @@ class PlayerContext(
     // ─────────────────────────────────────────────────────────────────────────
     // POSITIONAL ARGUMENT ACCESS
     // ─────────────────────────────────────────────────────────────────────────
+
     fun arg(index: Int): String? = args.getOrNull(index)
 
     fun argOr(
@@ -289,6 +293,7 @@ class PlayerContext(
     // ─────────────────────────────────────────────────────────────────────────
     // COOLDOWN UTILITIES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun isOnCooldown(
         command: String,
         seconds: Int,
@@ -303,23 +308,25 @@ class PlayerContext(
     // ─────────────────────────────────────────────────────────────────────────
     // MINIMESSAGE RESPONSES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun send(message: String) = player.sendMessage(message.mm())
 
     fun send(component: Component) = player.sendMessage(component)
 
-    fun reply(message: String) = send("<gray>» </gray>$message")
+    fun reply(message: String) = send("<gray>» $message")
 
-    fun success(message: String) = send("<#2ecc71>✔</> <gray>$message")
+    fun success(message: String) = send("<#2ecc71>✔ <gray>$message")
 
-    fun error(message: String) = send("<#e74c3c>✖</> <gray>$message")
+    fun error(message: String) = send("<#e74c3c>✖ <gray>$message")
 
-    fun warn(message: String) = send("<#f1c40f>⚠</> <gray>$message")
+    fun warn(message: String) = send("<#f1c40f>⚠ <gray>$message")
 
-    fun info(message: String) = send("<#3498db>✦</> <gray>$message")
+    fun info(message: String) = send("<#3498db>✦ <gray>$message")
 
     // ─────────────────────────────────────────────────────────────────────────
     // PLAYER-EXCLUSIVE FEATURES
     // ─────────────────────────────────────────────────────────────────────────
+
     fun actionBar(message: String) = player.sendActionBar(message.mm())
 
     fun title(
@@ -396,6 +403,7 @@ class PlayerContext(
     // ─────────────────────────────────────────────────────────────────────────
     // PARSER INTEGRATION
     // ─────────────────────────────────────────────────────────────────────────
+
     fun <T> parse(
         index: Int,
         parser: ArgParser<T>,
@@ -412,6 +420,7 @@ class PlayerContext(
         parse(index, parser).onSuccess(block).onFailure { error(it) }
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB CONTEXT
 // ═══════════════════════════════════════════════════════════════════════════════

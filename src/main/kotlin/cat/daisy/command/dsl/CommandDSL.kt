@@ -1,4 +1,5 @@
 package cat.daisy.command.dsl
+
 import cat.daisy.command.arguments.ArgParser
 import cat.daisy.command.arguments.ArgumentDef
 import cat.daisy.command.context.CommandContext
@@ -9,26 +10,34 @@ import cat.daisy.command.core.DaisyCommands
 import cat.daisy.command.core.SubCommand
 import cat.daisy.command.core.SubCommandData
 
-// DaisyCommand DSL
-//
-// Modern Kotlin DSL for creating commands with:
-// - Clean, type-safe syntax
-// - Full argument support
-// - Nested subcommands
-// - Cooldowns and permissions
-
+// ═══════════════════════════════════════════════════════════════════════════════
 // DSL ENTRY POINTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Create and register a command using the DSL.
+ */
 inline fun daisyCommand(
     name: String,
     block: DaisyCommandBuilder.() -> Unit,
 ): DaisyCommand = DaisyCommandBuilder(name).apply(block).build().also { DaisyCommands.register(it) }
 
+/**
+ * Build a command without registering it.
+ */
 inline fun buildCommand(
     name: String,
     block: DaisyCommandBuilder.() -> Unit,
 ): DaisyCommand = DaisyCommandBuilder(name).apply(block).build()
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // COMMAND BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Builder for creating DaisyCommand instances.
+ * Supports both Kotlin DSL and Java fluent API.
+ */
 class DaisyCommandBuilder(
     private val name: String,
 ) {
@@ -56,50 +65,37 @@ class DaisyCommandBuilder(
 
     @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
 
-    // Java-friendly setters
-    fun setDescription(value: String): DaisyCommandBuilder {
-        description = value
-        return this
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // JAVA-FRIENDLY SETTERS
+    // ─────────────────────────────────────────────────────────────────────────
 
-    fun setUsage(value: String): DaisyCommandBuilder {
-        usage = value
-        return this
-    }
+    fun setDescription(value: String) = apply { description = value }
 
-    fun setPermission(value: String?): DaisyCommandBuilder {
-        permission = value
-        return this
-    }
+    fun setUsage(value: String) = apply { usage = value }
 
-    fun setAliases(vararg names: String): DaisyCommandBuilder {
-        aliases = names.toList().toTypedArray()
-        return this
-    }
+    fun setPermission(value: String?) = apply { permission = value }
 
-    fun setPlayerOnly(value: Boolean): DaisyCommandBuilder {
-        playerOnly = value
-        return this
-    }
+    fun setAliases(vararg names: String) = apply { aliases = names.toList().toTypedArray() }
 
-    fun setCooldown(seconds: Int): DaisyCommandBuilder {
-        cooldown = seconds
-        return this
-    }
+    fun setPlayerOnly(value: Boolean) = apply { playerOnly = value }
 
-    fun setCooldownMessage(value: String?): DaisyCommandBuilder {
-        cooldownMessage = value
-        return this
-    }
+    fun setCooldown(seconds: Int) = apply { cooldown = seconds }
 
-    fun setCooldownBypassPermission(value: String?): DaisyCommandBuilder {
-        cooldownBypassPermission = value
-        return this
-    }
+    fun setCooldownMessage(value: String?) = apply { cooldownMessage = value }
+
+    fun setCooldownBypassPermission(value: String?) = apply { cooldownBypassPermission = value }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // KOTLIN DSL METHODS
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun withAliases(vararg names: String) {
         aliases = names.toList().toTypedArray()
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ARGUMENT DEFINITIONS
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun stringArgument(
         name: String,
@@ -121,8 +117,7 @@ class DaisyCommandBuilder(
         max: Int = Int.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.IntArg(name, min, max, optional)
+        arguments += ArgumentDef.IntArg(name, min, max, optional)
     }
 
     fun longArgument(
@@ -131,8 +126,7 @@ class DaisyCommandBuilder(
         max: Long = Long.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.LongArg(name, min, max, optional)
+        arguments += ArgumentDef.LongArg(name, min, max, optional)
     }
 
     fun doubleArgument(
@@ -141,8 +135,7 @@ class DaisyCommandBuilder(
         max: Double = Double.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.DoubleArg(name, min, max, optional)
+        arguments += ArgumentDef.DoubleArg(name, min, max, optional)
     }
 
     fun floatArgument(
@@ -151,8 +144,7 @@ class DaisyCommandBuilder(
         max: Float = Float.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.FloatArg(name, min, max, optional)
+        arguments += ArgumentDef.FloatArg(name, min, max, optional)
     }
 
     fun booleanArgument(
@@ -223,16 +215,14 @@ class DaisyCommandBuilder(
         vararg choices: String,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.ChoiceArg(name, choices.toList(), optional)
+        arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
     }
 
     inline fun <reified E : Enum<E>> enumArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.EnumArg(name, E::class.java, optional)
+        arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
     }
 
     fun <T> customArgument(
@@ -240,17 +230,23 @@ class DaisyCommandBuilder(
         parser: ArgParser<T>,
         optional: Boolean = false,
     ) {
-        arguments +=
-            ArgumentDef.CustomArg(name, parser, optional)
+        arguments += ArgumentDef.CustomArg(name, parser, optional)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SUBCOMMANDS
+    // ─────────────────────────────────────────────────────────────────────────
 
     inline fun subcommand(
         subName: String,
         block: SubCommandBuilder.() -> Unit,
     ) {
-        subcommands +=
-            SubCommandBuilder(subName).apply(block).build()
+        subcommands += SubCommandBuilder(subName).apply(block).build()
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EXECUTION
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun onExecute(block: CommandContext.() -> Unit) {
         executor = block
@@ -265,7 +261,12 @@ class DaisyCommandBuilder(
         tabProvider = block
     }
 
-    @PublishedApi internal fun build(): DaisyCommand {
+    // ─────────────────────────────────────────────────────────────────────────
+    // BUILD
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @PublishedApi
+    internal fun build(): DaisyCommand {
         val cmd =
             DaisyCommand(
                 name,
@@ -279,6 +280,7 @@ class DaisyCommandBuilder(
                 cooldownBypassPermission,
                 arguments.toList(),
             )
+
         subcommands.forEach { data ->
             cmd.addSubcommand(
                 data.name,
@@ -298,13 +300,20 @@ class DaisyCommandBuilder(
                 ),
             )
         }
+
         executor?.let { cmd.onExecute(it) }
         tabProvider?.let { cmd.tabComplete(it) }
         return cmd
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // SUBCOMMAND BUILDER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Builder for creating SubCommand instances.
+ */
 class SubCommandBuilder
     @PublishedApi
     internal constructor(
@@ -326,6 +335,10 @@ class SubCommandBuilder
 
         @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
 
+        // ─────────────────────────────────────────────────────────────────────────
+        // ARGUMENT DEFINITIONS
+        // ─────────────────────────────────────────────────────────────────────────
+
         fun stringArgument(
             name: String,
             optional: Boolean = false,
@@ -346,8 +359,7 @@ class SubCommandBuilder
             max: Int = Int.MAX_VALUE,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.IntArg(name, min, max, optional)
+            arguments += ArgumentDef.IntArg(name, min, max, optional)
         }
 
         fun longArgument(
@@ -356,8 +368,7 @@ class SubCommandBuilder
             max: Long = Long.MAX_VALUE,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.LongArg(name, min, max, optional)
+            arguments += ArgumentDef.LongArg(name, min, max, optional)
         }
 
         fun doubleArgument(
@@ -366,8 +377,7 @@ class SubCommandBuilder
             max: Double = Double.MAX_VALUE,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.DoubleArg(name, min, max, optional)
+            arguments += ArgumentDef.DoubleArg(name, min, max, optional)
         }
 
         fun floatArgument(
@@ -376,8 +386,7 @@ class SubCommandBuilder
             max: Float = Float.MAX_VALUE,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.FloatArg(name, min, max, optional)
+            arguments += ArgumentDef.FloatArg(name, min, max, optional)
         }
 
         fun booleanArgument(
@@ -448,16 +457,14 @@ class SubCommandBuilder
             vararg choices: String,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.ChoiceArg(name, choices.toList(), optional)
+            arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
         }
 
         inline fun <reified E : Enum<E>> enumArgument(
             name: String,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.EnumArg(name, E::class.java, optional)
+            arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
         }
 
         fun <T> customArgument(
@@ -465,17 +472,23 @@ class SubCommandBuilder
             parser: ArgParser<T>,
             optional: Boolean = false,
         ) {
-            arguments +=
-                ArgumentDef.CustomArg(name, parser, optional)
+            arguments += ArgumentDef.CustomArg(name, parser, optional)
         }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // SUBCOMMANDS
+        // ─────────────────────────────────────────────────────────────────────────
 
         inline fun subcommand(
             subName: String,
             block: SubCommandBuilder.() -> Unit,
         ) {
-            subcommands +=
-                SubCommandBuilder(subName).apply(block).build()
+            subcommands += SubCommandBuilder(subName).apply(block).build()
         }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // EXECUTION
+        // ─────────────────────────────────────────────────────────────────────────
 
         fun onExecute(block: CommandContext.() -> Unit) {
             executor = block
@@ -490,7 +503,12 @@ class SubCommandBuilder
             tabProvider = block
         }
 
-        @PublishedApi internal fun build() =
+        // ─────────────────────────────────────────────────────────────────────────
+        // BUILD
+        // ─────────────────────────────────────────────────────────────────────────
+
+        @PublishedApi
+        internal fun build() =
             SubCommandData(
                 name,
                 description,
