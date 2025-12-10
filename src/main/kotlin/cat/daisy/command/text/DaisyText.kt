@@ -145,11 +145,11 @@ object DaisyText {
         val timestamp = LocalDateTime.now().format(logFormatter)
         val (color, prefix) =
             when (level.uppercase()) {
-                "ERROR" -> Colors.ERROR to "✖"
-                "SUCCESS" -> Colors.SUCCESS to "✔"
-                "WARNING" -> Colors.WARNING to "⚠"
-                "DEBUG" -> Colors.MUTED to "•"
-                else -> Colors.INFO to "✦"
+                "ERROR" -> Colors.ERROR to "✖ "
+                "SUCCESS" -> Colors.SUCCESS to "✔ "
+                "WARNING" -> Colors.WARNING to "⚠ "
+                "DEBUG" -> Colors.MUTED to "• "
+                else -> Colors.INFO to "✦ "
             }
         val contextStr =
             if (context.isNotEmpty()) {
