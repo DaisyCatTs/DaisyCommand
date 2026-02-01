@@ -126,17 +126,28 @@ class CommandContext(
 
     fun send(component: Component) = sender.sendMessage(component)
 
+    // Beautiful prefixed messages with emojis
     fun reply(message: String) = send("<gray>» $message")
 
     fun success(message: String) = send("<#2ecc71>✔ <gray>$message")
 
     fun error(message: String) = send("<#e74c3c>✖ <gray>$message")
 
-    fun warn(message: String) = send("<#f1c40f>⚠ <gray>$message")
+    fun warn(message: String) = send("<#f39c12>⚠ <gray>$message")
 
-    fun info(message: String) = send("<#3498db>✦ <gray>$message")
+    fun info(message: String) = send("<#3498db>ℹ <gray>$message")
 
-    fun broadcast(message: String) = Bukkit.broadcast("<#9b59b6>» <white>$message".mm())
+    fun notify(message: String) = send("<#9b59b6>★ <gray>$message")
+
+    fun tip(message: String) = send("<#1abc9c>💡 <gray>$message")
+
+    fun currency(message: String) = send("<#f1c40f>✧ <gray>$message")
+
+    fun heart(message: String) = send("<#e74c3c>❤ <gray>$message")
+
+    fun team(message: String) = send("<#3498db>⚑ <gray>$message")
+
+    fun broadcast(message: String) = Bukkit.broadcast("<#9b59b6>📢 <white>$message".mm())
 
     // ─────────────────────────────────────────────────────────────────────────
     // PLAYER UTILITIES
@@ -313,15 +324,26 @@ class PlayerContext(
 
     fun send(component: Component) = player.sendMessage(component)
 
+    // Beautiful prefixed messages with emojis
     fun reply(message: String) = send("<gray>» $message")
 
     fun success(message: String) = send("<#2ecc71>✔ <gray>$message")
 
     fun error(message: String) = send("<#e74c3c>✖ <gray>$message")
 
-    fun warn(message: String) = send("<#f1c40f>⚠ <gray>$message")
+    fun warn(message: String) = send("<#f39c12>⚠ <gray>$message")
 
-    fun info(message: String) = send("<#3498db>✦ <gray>$message")
+    fun info(message: String) = send("<#3498db>ℹ <gray>$message")
+
+    fun notify(message: String) = send("<#9b59b6>★ <gray>$message")
+
+    fun tip(message: String) = send("<#1abc9c>💡 <gray>$message")
+
+    fun currency(message: String) = send("<#f1c40f>✧ <gray>$message")
+
+    fun heart(message: String) = send("<#e74c3c>❤ <gray>$message")
+
+    fun team(message: String) = send("<#3498db>⚑ <gray>$message")
 
     // ─────────────────────────────────────────────────────────────────────────
     // PLAYER-EXCLUSIVE FEATURES

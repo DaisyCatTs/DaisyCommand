@@ -45,9 +45,17 @@ object DaisyCommands {
     }
 
     private fun fetchCommandMap(plugin: JavaPlugin): CommandMap =
-        plugin.server.javaClass.getDeclaredField("commandMap").run {
-            isAccessible = true
-            get(plugin.server) as CommandMap
+        try {
+            val field = plugin.server.javaClass.getDeclaredField("commandMap")
+            field.isAccessible = true
+            field.get(plugin.server) as? CommandMap
+                ?: throw IllegalStateException("CommandMap field returned null")
+        } catch (e: NoSuchFieldException) {
+            throw IllegalStateException("CommandMap field not found - incompatible server version", e)
+        } catch (e: IllegalAccessException) {
+            throw IllegalStateException("Cannot access CommandMap field", e)
+        } catch (e: ClassCastException) {
+            throw IllegalStateException("CommandMap field is not of expected type", e)
         }
 
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -75,11 +83,10 @@ object DaisyCommands {
     fun unregister(name: String) {
         val map = commandMap ?: return
         val lowerName = name.lowercase()
-        try {
+        runCatching {
             val knownCommands = map.knownCommands
             knownCommands.remove(lowerName)
             knownCommands.remove("$pluginName:$lowerName")
-        } catch (_: Exception) {
         }
         commands.remove(lowerName)
     }
@@ -90,11 +97,10 @@ object DaisyCommands {
     fun unregisterAll() {
         val map = commandMap ?: return
         commands.keys.forEach { name ->
-            try {
+            runCatching {
                 val knownCommands = map.knownCommands
                 knownCommands.remove(name)
                 knownCommands.remove("$pluginName:$name")
-            } catch (_: Exception) {
             }
         }
         commands.clear()
