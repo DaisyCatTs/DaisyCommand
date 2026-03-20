@@ -1,114 +1,267 @@
+@file:Suppress("unused", "DEPRECATION", "UNCHECKED_CAST")
+
 package cat.daisy.command.dsl
 
-import cat.daisy.command.arguments.ArgParser
-import cat.daisy.command.arguments.ArgumentDef
+import cat.daisy.command.arguments.ArgumentRef
+import cat.daisy.command.arguments.CompiledArgument
+import cat.daisy.command.arguments.DaisyParser
+import cat.daisy.command.arguments.MutableArgumentDefinition
+import cat.daisy.command.arguments.Parsers
+import cat.daisy.command.arguments.optional
 import cat.daisy.command.context.CommandContext
-import cat.daisy.command.context.PlayerContext
-import cat.daisy.command.context.TabContext
-import cat.daisy.command.core.DaisyCommand
+import cat.daisy.command.context.ConsoleCommandContext
+import cat.daisy.command.context.PlayerCommandContext
+import cat.daisy.command.core.AnyHandler
+import cat.daisy.command.core.CommandNodeSpec
+import cat.daisy.command.core.CommandSpec
+import cat.daisy.command.core.ConsoleHandler
+import cat.daisy.command.core.CooldownSpec
 import cat.daisy.command.core.DaisyCommands
-import cat.daisy.command.core.SubCommand
-import cat.daisy.command.core.SubCommandData
+import cat.daisy.command.core.HandlerSpec
+import cat.daisy.command.core.PlayerHandler
+import cat.daisy.command.core.SenderConstraint
+import java.time.Duration
+import java.util.function.Consumer
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// DSL ENTRY POINTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Create and register a command using the DSL.
- */
-inline fun daisyCommand(
+fun command(
     name: String,
-    block: DaisyCommandBuilder.() -> Unit,
-): DaisyCommand = DaisyCommandBuilder(name).apply(block).build().also { DaisyCommands.register(it) }
+    block: CommandBuilder.() -> Unit,
+): CommandSpec = CommandBuilder(name, root = true).apply(block).build()
 
-/**
- * Build a command without registering it.
- */
-inline fun buildCommand(
+@Deprecated("Use command(name) { ... } and JavaPlugin.registerCommands(...) instead.")
+fun daisyCommand(
     name: String,
-    block: DaisyCommandBuilder.() -> Unit,
-): DaisyCommand = DaisyCommandBuilder(name).apply(block).build()
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMMAND BUILDER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Builder for creating DaisyCommand instances.
- * Supports both Kotlin DSL and Java fluent API.
- */
-class DaisyCommandBuilder(
-    private val name: String,
-) {
-    @JvmField var description: String = ""
-
-    @JvmField var usage: String = "/$name"
-
-    @JvmField var permission: String? = null
-
-    @JvmField var aliases: Array<String> = emptyArray()
-
-    @JvmField var playerOnly: Boolean = false
-
-    @JvmField var cooldown: Int = 0
-
-    @JvmField var cooldownMessage: String? = null
-
-    @JvmField var cooldownBypassPermission: String? = null
-
-    @PublishedApi internal val subcommands = mutableListOf<SubCommandData>()
-
-    @PublishedApi internal val arguments = mutableListOf<ArgumentDef>()
-
-    @PublishedApi internal var executor: (CommandContext.() -> Unit)? = null
-
-    @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // JAVA-FRIENDLY SETTERS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun setDescription(value: String) = apply { description = value }
-
-    fun setUsage(value: String) = apply { usage = value }
-
-    fun setPermission(value: String?) = apply { permission = value }
-
-    fun setAliases(vararg names: String) = apply { aliases = names.toList().toTypedArray() }
-
-    fun setPlayerOnly(value: Boolean) = apply { playerOnly = value }
-
-    fun setCooldown(seconds: Int) = apply { cooldown = seconds }
-
-    fun setCooldownMessage(value: String?) = apply { cooldownMessage = value }
-
-    fun setCooldownBypassPermission(value: String?) = apply { cooldownBypassPermission = value }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // KOTLIN DSL METHODS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun withAliases(vararg names: String) {
-        aliases = names.toList().toTypedArray()
+    block: CommandBuilder.() -> Unit,
+): CommandSpec =
+    command(name, block).also {
+        DaisyCommands.register(it)
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ARGUMENT DEFINITIONS
-    // ─────────────────────────────────────────────────────────────────────────
+@Deprecated("Use command(name) { ... } and registerCommands(...) instead.")
+fun buildCommand(
+    name: String,
+    block: CommandBuilder.() -> Unit,
+): CommandSpec = command(name, block)
+
+class CommandSetBuilder {
+    private val commands = mutableListOf<CommandSpec>()
+
+    fun command(
+        name: String,
+        block: CommandBuilder.() -> Unit,
+    ) {
+        commands +=
+            cat.daisy.command.dsl
+                .command(name, block)
+    }
+
+    fun add(command: CommandSpec) {
+        commands += command
+    }
+
+    internal fun build(): List<CommandSpec> = commands.toList()
+}
+
+class CommandBuilder internal constructor(
+    private val name: String,
+    private val root: Boolean,
+) {
+    @Deprecated("Use description(\"...\") instead.")
+    var description: String = ""
+
+    @Deprecated("Usage is generated automatically. Override only for compatibility.")
+    var usage: String = ""
+
+    @Deprecated("Use permission(\"...\") instead.")
+    var permission: String? = null
+
+    @Deprecated("Use aliases(\"...\") instead.")
+    var aliases: Array<String> = emptyArray()
+
+    @Deprecated("Use playerOnly() instead.")
+    var playerOnly: Boolean = false
+
+    var consoleOnly: Boolean = false
+
+    @Deprecated("Use cooldown(Duration) instead.")
+    var cooldown: Int = 0
+
+    @Deprecated("Use cooldown(duration, message = ...) instead.")
+    var cooldownMessage: String? = null
+
+    @Deprecated("Use cooldown(duration, bypassPermission = ...) instead.")
+    var cooldownBypassPermission: String? = null
+
+    private val childBuilders = mutableListOf<CommandBuilder>()
+    private val arguments = mutableListOf<MutableArgumentDefinition>()
+
+    private var handler: HandlerSpec? = null
+    private var cooldownDuration: Duration? = null
+    private var explicitConstraint: SenderConstraint = SenderConstraint.ANY
+
+    fun description(value: String) {
+        description = value
+    }
+
+    fun permission(value: String) {
+        permission = value
+    }
+
+    fun aliases(vararg values: String) {
+        aliases = values.toList().toTypedArray()
+    }
+
+    @Deprecated("Use aliases(vararg) instead.")
+    fun withAliases(vararg values: String) {
+        aliases(*values)
+    }
+
+    fun playerOnly() {
+        playerOnly = true
+        consoleOnly = false
+        explicitConstraint = SenderConstraint.PLAYER_ONLY
+    }
+
+    fun consoleOnly() {
+        consoleOnly = true
+        playerOnly = false
+        explicitConstraint = SenderConstraint.CONSOLE_ONLY
+    }
+
+    fun cooldown(
+        duration: Duration,
+        bypassPermission: String? = null,
+        message: String? = null,
+    ) {
+        cooldownDuration = duration
+        cooldownBypassPermission = bypassPermission
+        cooldownMessage = message
+    }
+
+    fun sub(
+        name: String,
+        block: CommandBuilder.() -> Unit,
+    ) {
+        childBuilders += CommandBuilder(name, root = false).apply(block)
+    }
+
+    @Deprecated("Use sub(name) { ... } instead.")
+    fun subcommand(
+        name: String,
+        block: CommandBuilder.() -> Unit,
+    ) {
+        sub(name, block)
+    }
+
+    fun execute(block: CommandContext.() -> Unit) {
+        setHandler(AnyHandler(block))
+    }
+
+    @Deprecated("Use execute { ... } instead.")
+    fun onExecute(block: CommandContext.() -> Unit) {
+        execute(block)
+    }
+
+    fun executePlayer(block: PlayerCommandContext.() -> Unit) {
+        playerOnly()
+        setHandler(PlayerHandler(block))
+    }
+
+    @Deprecated("Use executePlayer { ... } instead.")
+    fun playerExecutor(block: PlayerCommandContext.() -> Unit) {
+        executePlayer(block)
+    }
+
+    fun executeConsole(block: ConsoleCommandContext.() -> Unit) {
+        consoleOnly()
+        setHandler(ConsoleHandler(block))
+    }
+
+    fun string(name: String): ArgumentRef<String> = argument(name, Parsers.STRING)
+
+    fun text(name: String): ArgumentRef<String> = argument(name, Parsers.TEXT)
+
+    fun int(
+        name: String,
+        min: Int = Int.MIN_VALUE,
+        max: Int = Int.MAX_VALUE,
+    ): ArgumentRef<Int> = argument(name, Parsers.int(min, max))
+
+    fun long(
+        name: String,
+        min: Long = Long.MIN_VALUE,
+        max: Long = Long.MAX_VALUE,
+    ): ArgumentRef<Long> = argument(name, Parsers.long(min, max))
+
+    fun double(
+        name: String,
+        min: Double = Double.NEGATIVE_INFINITY,
+        max: Double = Double.POSITIVE_INFINITY,
+    ): ArgumentRef<Double> = argument(name, Parsers.double(min, max))
+
+    fun float(
+        name: String,
+        min: Float = Float.NEGATIVE_INFINITY,
+        max: Float = Float.POSITIVE_INFINITY,
+    ): ArgumentRef<Float> = argument(name, Parsers.float(min, max))
+
+    fun boolean(name: String): ArgumentRef<Boolean> = argument(name, Parsers.BOOLEAN)
+
+    fun player(name: String): ArgumentRef<org.bukkit.entity.Player> = argument(name, Parsers.PLAYER)
+
+    fun offlinePlayer(name: String): ArgumentRef<org.bukkit.OfflinePlayer> = argument(name, Parsers.OFFLINE_PLAYER)
+
+    fun world(name: String): ArgumentRef<org.bukkit.World> = argument(name, Parsers.WORLD)
+
+    fun material(name: String): ArgumentRef<org.bukkit.Material> = argument(name, Parsers.MATERIAL)
+
+    fun gameMode(name: String): ArgumentRef<org.bukkit.GameMode> = argument(name, Parsers.GAME_MODE)
+
+    fun entityType(name: String): ArgumentRef<org.bukkit.entity.EntityType> = argument(name, Parsers.ENTITY_TYPE)
+
+    fun uuid(name: String): ArgumentRef<java.util.UUID> = argument(name, Parsers.UUID_PARSER)
+
+    fun duration(name: String): ArgumentRef<Duration> = argument(name, Parsers.DURATION)
+
+    fun choice(
+        name: String,
+        vararg options: String,
+    ): ArgumentRef<String> = argument(name, Parsers.choice(*options))
+
+    inline fun <reified E : Enum<E>> enum(name: String): ArgumentRef<E> = argument(name, Parsers.enum())
+
+    fun <T> argument(
+        name: String,
+        parser: DaisyParser<T>,
+    ): ArgumentRef<T> {
+        val definition =
+            MutableArgumentDefinition(
+                slot = arguments.size,
+                name = name,
+                parser = parser as DaisyParser<Any?>,
+            )
+        arguments += definition
+        return ArgumentRef(definition, name)
+    }
 
     fun stringArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.StringArg(name, optional)
+        val ref = string(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun greedyStringArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.GreedyStringArg(name, optional)
+        val ref = text(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun intArgument(
@@ -117,7 +270,10 @@ class DaisyCommandBuilder(
         max: Int = Int.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.IntArg(name, min, max, optional)
+        val ref = int(name, min, max)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun longArgument(
@@ -126,401 +282,256 @@ class DaisyCommandBuilder(
         max: Long = Long.MAX_VALUE,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.LongArg(name, min, max, optional)
+        val ref = long(name, min, max)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun doubleArgument(
         name: String,
-        min: Double = Double.MIN_VALUE,
-        max: Double = Double.MAX_VALUE,
+        min: Double = Double.NEGATIVE_INFINITY,
+        max: Double = Double.POSITIVE_INFINITY,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.DoubleArg(name, min, max, optional)
+        val ref = double(name, min, max)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun floatArgument(
         name: String,
-        min: Float = Float.MIN_VALUE,
-        max: Float = Float.MAX_VALUE,
+        min: Float = Float.NEGATIVE_INFINITY,
+        max: Float = Float.POSITIVE_INFINITY,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.FloatArg(name, min, max, optional)
+        val ref = float(name, min, max)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun booleanArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.BooleanArg(name, optional)
+        val ref = boolean(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun playerArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.PlayerArg(name, optional)
+        val ref = player(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun offlinePlayerArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.OfflinePlayerArg(name, optional)
+        val ref = offlinePlayer(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun worldArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.WorldArg(name, optional)
+        val ref = world(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun materialArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.MaterialArg(name, optional)
+        val ref = material(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun gameModeArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.GameModeArg(name, optional)
+        val ref = gameMode(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun entityTypeArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.EntityTypeArg(name, optional)
+        val ref = entityType(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun uuidArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.UUIDArg(name, optional)
+        val ref = uuid(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun durationArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.DurationArg(name, optional)
+        val ref = duration(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun choiceArgument(
         name: String,
-        vararg choices: String,
+        vararg options: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
+        val ref = choice(name, *options)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     inline fun <reified E : Enum<E>> enumArgument(
         name: String,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
+        val ref = enum<E>(name)
+        if (optional) {
+            ref.optional()
+        }
     }
 
     fun <T> customArgument(
         name: String,
-        parser: ArgParser<T>,
+        parser: DaisyParser<T>,
         optional: Boolean = false,
     ) {
-        arguments += ArgumentDef.CustomArg(name, parser, optional)
+        val ref = argument(name, parser)
+        if (optional) {
+            ref.optional()
+        }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SUBCOMMANDS
-    // ─────────────────────────────────────────────────────────────────────────
+    fun setDescription(value: String) = apply { description = value }
 
-    inline fun subcommand(
-        subName: String,
-        block: SubCommandBuilder.() -> Unit,
-    ) {
-        subcommands += SubCommandBuilder(subName).apply(block).build()
+    fun setUsage(value: String) = apply { usage = value }
+
+    fun setPermission(value: String?) = apply { permission = value }
+
+    fun setAliases(vararg values: String) = apply { aliases = values.toList().toTypedArray() }
+
+    fun setPlayerOnly(value: Boolean) =
+        apply {
+            playerOnly = value
+            if (value) {
+                explicitConstraint = SenderConstraint.PLAYER_ONLY
+                consoleOnly = false
+            } else if (!consoleOnly) {
+                explicitConstraint = SenderConstraint.ANY
+            }
+        }
+
+    fun setCooldown(seconds: Int) =
+        apply {
+            cooldown = seconds
+            cooldownDuration = if (seconds > 0) Duration.ofSeconds(seconds.toLong()) else null
+        }
+
+    fun setCooldownMessage(value: String?) = apply { cooldownMessage = value }
+
+    fun setCooldownBypassPermission(value: String?) = apply { cooldownBypassPermission = value }
+
+    fun configure(configure: Consumer<CommandBuilder>) = apply { configure.accept(this) }
+
+    internal fun build(): CommandSpec {
+        check(root) { "Only root builders can build a CommandSpec." }
+        return CommandSpec(
+            name = name,
+            description = description,
+            aliases = aliases.toList(),
+            permission = permission,
+            senderConstraint = resolveConstraint(),
+            cooldown = resolveCooldown(),
+            arguments = compileArguments(),
+            children = childBuilders.map { it.buildNode() },
+            handler = handler,
+            usageOverride = usage.takeIf(String::isNotBlank),
+        )
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // EXECUTION
-    // ─────────────────────────────────────────────────────────────────────────
+    private fun buildNode(): CommandNodeSpec =
+        CommandNodeSpec(
+            name = name,
+            description = description,
+            aliases = aliases.toList(),
+            permission = permission,
+            senderConstraint = resolveConstraint(),
+            cooldown = resolveCooldown(),
+            arguments = compileArguments(),
+            children = childBuilders.map { it.buildNode() },
+            handler = handler,
+            usageOverride = usage.takeIf(String::isNotBlank),
+        )
 
-    fun onExecute(block: CommandContext.() -> Unit) {
-        executor = block
-    }
+    private fun resolveConstraint(): SenderConstraint =
+        when {
+            playerOnly && consoleOnly -> error("Node '$name' cannot be both player-only and console-only.")
+            playerOnly -> SenderConstraint.PLAYER_ONLY
+            consoleOnly -> SenderConstraint.CONSOLE_ONLY
+            else -> explicitConstraint
+        }
 
-    fun playerExecutor(block: PlayerContext.() -> Unit) {
-        playerOnly = true
-        executor = { asPlayer()?.let { PlayerContext(it, args, namedArgs, label).block() } }
-    }
-
-    fun tabComplete(block: TabContext.() -> List<String>) {
-        tabProvider = block
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // BUILD
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @PublishedApi
-    internal fun build(): DaisyCommand {
-        val cmd =
-            DaisyCommand(
-                name,
-                description,
-                usage,
-                permission,
-                aliases,
-                playerOnly,
-                cooldown,
-                cooldownMessage,
-                cooldownBypassPermission,
-                arguments.toList(),
+    private fun resolveCooldown(): CooldownSpec? {
+        val duration =
+            cooldownDuration
+                ?: if (cooldown > 0) {
+                    Duration.ofSeconds(cooldown.toLong())
+                } else {
+                    null
+                }
+        return duration?.let {
+            CooldownSpec(
+                duration = it,
+                bypassPermission = cooldownBypassPermission,
+                message = cooldownMessage,
             )
+        }
+    }
 
-        subcommands.forEach { data ->
-            cmd.addSubcommand(
-                data.name,
-                SubCommand(
-                    data.name,
-                    data.description,
-                    data.permission,
-                    data.playerOnly,
-                    data.cooldown,
-                    data.cooldownMessage,
-                    data.cooldownBypassPermission,
-                    data.aliases,
-                    data.arguments,
-                    data.subcommands,
-                    data.executor,
-                    data.tabProvider,
-                ),
+    private fun compileArguments(): List<CompiledArgument> =
+        arguments.map {
+            CompiledArgument(
+                slot = it.slot,
+                name = it.name,
+                parser = it.parser,
+                optional = it.optional,
             )
         }
 
-        executor?.let { cmd.onExecute(it) }
-        tabProvider?.let { cmd.tabComplete(it) }
-        return cmd
+    private fun setHandler(value: HandlerSpec) {
+        check(handler == null) { "Node '$name' already has an execution handler." }
+        handler = value
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SUBCOMMAND BUILDER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Builder for creating SubCommand instances.
- */
-class SubCommandBuilder
-    @PublishedApi
-    internal constructor(
-        private val name: String,
-    ) {
-        var description: String = ""
-        var permission: String? = null
-        var playerOnly: Boolean = false
-        var cooldown: Int = 0
-        var cooldownMessage: String? = null
-        var cooldownBypassPermission: String? = null
-        var aliases: List<String> = emptyList()
-
-        @PublishedApi internal val arguments = mutableListOf<ArgumentDef>()
-
-        @PublishedApi internal val subcommands = mutableListOf<SubCommandData>()
-
-        @PublishedApi internal var executor: (CommandContext.() -> Unit) = {}
-
-        @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // ARGUMENT DEFINITIONS
-        // ─────────────────────────────────────────────────────────────────────────
-
-        fun stringArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.StringArg(name, optional)
-        }
-
-        fun greedyStringArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.GreedyStringArg(name, optional)
-        }
-
-        fun intArgument(
-            name: String,
-            min: Int = Int.MIN_VALUE,
-            max: Int = Int.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.IntArg(name, min, max, optional)
-        }
-
-        fun longArgument(
-            name: String,
-            min: Long = Long.MIN_VALUE,
-            max: Long = Long.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.LongArg(name, min, max, optional)
-        }
-
-        fun doubleArgument(
-            name: String,
-            min: Double = Double.MIN_VALUE,
-            max: Double = Double.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.DoubleArg(name, min, max, optional)
-        }
-
-        fun floatArgument(
-            name: String,
-            min: Float = Float.MIN_VALUE,
-            max: Float = Float.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.FloatArg(name, min, max, optional)
-        }
-
-        fun booleanArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.BooleanArg(name, optional)
-        }
-
-        fun playerArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.PlayerArg(name, optional)
-        }
-
-        fun offlinePlayerArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.OfflinePlayerArg(name, optional)
-        }
-
-        fun worldArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.WorldArg(name, optional)
-        }
-
-        fun materialArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.MaterialArg(name, optional)
-        }
-
-        fun gameModeArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.GameModeArg(name, optional)
-        }
-
-        fun entityTypeArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.EntityTypeArg(name, optional)
-        }
-
-        fun uuidArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.UUIDArg(name, optional)
-        }
-
-        fun durationArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.DurationArg(name, optional)
-        }
-
-        fun choiceArgument(
-            name: String,
-            vararg choices: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
-        }
-
-        inline fun <reified E : Enum<E>> enumArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
-        }
-
-        fun <T> customArgument(
-            name: String,
-            parser: ArgParser<T>,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.CustomArg(name, parser, optional)
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // SUBCOMMANDS
-        // ─────────────────────────────────────────────────────────────────────────
-
-        inline fun subcommand(
-            subName: String,
-            block: SubCommandBuilder.() -> Unit,
-        ) {
-            subcommands += SubCommandBuilder(subName).apply(block).build()
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // EXECUTION
-        // ─────────────────────────────────────────────────────────────────────────
-
-        fun onExecute(block: CommandContext.() -> Unit) {
-            executor = block
-        }
-
-        fun playerExecutor(block: PlayerContext.() -> Unit) {
-            playerOnly = true
-            executor = { asPlayer()?.let { PlayerContext(it, args, namedArgs, label).block() } }
-        }
-
-        fun tabComplete(block: TabContext.() -> List<String>) {
-            tabProvider = block
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // BUILD
-        // ─────────────────────────────────────────────────────────────────────────
-
-        @PublishedApi
-        internal fun build() =
-            SubCommandData(
-                name,
-                description,
-                permission,
-                playerOnly,
-                cooldown,
-                cooldownMessage,
-                cooldownBypassPermission,
-                aliases,
-                arguments.toList(),
-                subcommands.toList(),
-                executor,
-                tabProvider,
-            )
-    }
