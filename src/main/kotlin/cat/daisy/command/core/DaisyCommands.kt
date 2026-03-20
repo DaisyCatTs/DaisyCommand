@@ -2,52 +2,51 @@
 
 package cat.daisy.command.core
 
-import cat.daisy.command.cooldown.DaisyCooldowns
 import cat.daisy.command.dsl.CommandSetBuilder
 import io.papermc.paper.command.brigadier.BasicCommand
 import io.papermc.paper.command.brigadier.CommandSourceStack
 import org.bukkit.command.CommandSender
 import org.bukkit.plugin.java.JavaPlugin
-import java.util.concurrent.ConcurrentHashMap
 
 fun JavaPlugin.registerCommands(vararg commands: CommandSpec) {
+    registerCompiled(commands.toList(), DaisyConfig())
+}
+
+fun JavaPlugin.registerCommands(block: CommandSetBuilder.() -> Unit) {
+    val built = CommandSetBuilder().apply(block).build()
+    registerCompiled(built.commands, built.config)
+}
+
+private fun JavaPlugin.registerCompiled(
+    commands: List<CommandSpec>,
+    config: DaisyConfig,
+) {
+    validateRootKeys(commands)
+    val runtime = CommandRuntime(logger = logger, config = config)
     for (command in commands) {
         val compiled = command.compiled
-        val runtime = CommandRuntime(logger)
         registerCommand(command.name, command.description, command.aliases, PaperCommandAdapter(compiled, runtime))
     }
 }
 
-fun JavaPlugin.registerCommands(block: CommandSetBuilder.() -> Unit) {
-    val builder = CommandSetBuilder().apply(block)
-    registerCommands(*builder.build().toTypedArray())
+private fun validateRootKeys(commands: List<CommandSpec>) {
+    val keys = LinkedHashMap<String, String>()
+    for (command in commands) {
+        registerRootKey(keys, command.name, command.name)
+        for (alias in command.aliases) {
+            registerRootKey(keys, alias, command.name)
+        }
+    }
 }
 
-@Deprecated("Use JavaPlugin.registerCommands(...) instead.")
-object DaisyCommands {
-    private var plugin: JavaPlugin? = null
-    private val registered = ConcurrentHashMap<String, CommandSpec>()
-
-    fun initialize(plugin: JavaPlugin) {
-        this.plugin = plugin
-    }
-
-    fun register(command: CommandSpec) {
-        val plugin = plugin ?: error("DaisyCommands is not initialized. Call initialize(plugin) first.")
-        registered[command.name.lowercase()] = command
-        plugin.registerCommands(command)
-    }
-
-    operator fun get(name: String): CommandSpec? = registered[name.lowercase()]
-
-    fun getAll(): Collection<CommandSpec> = registered.values.toSet()
-
-    fun isRegistered(name: String): Boolean = registered.containsKey(name.lowercase())
-
-    fun shutdown() {
-        registered.clear()
-        plugin = null
-        DaisyCooldowns.clearAll()
+private fun registerRootKey(
+    keys: MutableMap<String, String>,
+    rawKey: String,
+    owner: String,
+) {
+    val normalized = rawKey.lowercase()
+    require(keys.putIfAbsent(normalized, owner) == null) {
+        "Duplicate root command key '$rawKey'."
     }
 }
 

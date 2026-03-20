@@ -15,6 +15,7 @@ import java.util.UUID
 
 private const val MAX_INPUT_LENGTH = 256
 private const val MAX_TEXT_LENGTH = 1024
+private val DURATION_PATTERN = Regex("""(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?""")
 
 sealed class ParseResult<out T> {
     data class Success<T>(
@@ -29,34 +30,6 @@ sealed class ParseResult<out T> {
         when (this) {
             is Success -> Success(transform(value))
             is Failure -> this
-        }
-
-    inline fun <R> flatMap(transform: (T) -> ParseResult<R>): ParseResult<R> =
-        when (this) {
-            is Success -> transform(value)
-            is Failure -> this
-        }
-
-    inline fun onSuccess(block: (T) -> Unit): ParseResult<T> {
-        if (this is Success) {
-            block(value)
-        }
-        return this
-    }
-
-    inline fun onFailure(block: (String) -> Unit): ParseResult<T> {
-        if (this is Failure) {
-            block(error)
-        }
-        return this
-    }
-
-    fun getOrNull(): T? = (this as? Success)?.value
-
-    fun getOrThrow(): T =
-        when (this) {
-            is Success -> value
-            is Failure -> throw IllegalStateException(error)
         }
 
     companion object {
@@ -99,14 +72,24 @@ data class ParseContext(
     val platform: DaisyPlatform,
     val commandPath: List<String>,
     val argumentName: String,
+    val previousArguments: Map<String, Any?> = emptyMap(),
 )
 
 data class SuggestContext(
     val sender: CommandSender,
     val platform: DaisyPlatform,
     val commandPath: List<String>,
-    val argumentIndex: Int,
+    val argumentName: String,
     val currentInput: String,
+    val previousArguments: Map<String, Any?>,
+)
+
+data class ValidationContext<T>(
+    val sender: CommandSender,
+    val platform: DaisyPlatform,
+    val commandPath: List<String>,
+    val argumentName: String,
+    val value: T,
     val previousArguments: Map<String, Any?>,
 )
 
@@ -122,6 +105,45 @@ interface DaisyParser<T> {
     fun suggest(context: SuggestContext): List<String> = emptyList()
 }
 
+enum class ArgumentKind {
+    POSITIONAL,
+    OPTION,
+    FLAG,
+}
+
+internal object NoDefaultValue
+
+internal class MutableArgumentDefinition(
+    val slot: Int,
+    val name: String,
+    val parser: DaisyParser<Any?>,
+    val kind: ArgumentKind,
+    val longName: String? = null,
+    val shortName: String? = null,
+    var optional: Boolean = false,
+    var defaultValue: Any? = NoDefaultValue,
+    var description: String = "",
+    var suggestions: (SuggestContext.() -> Iterable<String>)? = null,
+    var validatorMessage: String? = null,
+    var validator: ((ValidationContext<Any?>) -> Boolean)? = null,
+)
+
+internal data class CompiledArgument(
+    val slot: Int,
+    val name: String,
+    val parser: DaisyParser<Any?>,
+    val kind: ArgumentKind,
+    val longName: String?,
+    val shortName: String?,
+    val optional: Boolean,
+    val hasDefault: Boolean,
+    val defaultValue: Any?,
+    val description: String,
+    val suggestions: (SuggestContext.() -> Iterable<String>)?,
+    val validatorMessage: String?,
+    val validator: ((ValidationContext<Any?>) -> Boolean)?,
+)
+
 class ArgumentRef<T> internal constructor(
     internal val definition: MutableArgumentDefinition,
     val name: String,
@@ -131,24 +153,36 @@ class ArgumentRef<T> internal constructor(
         definition.optional = true
         return this as ArgumentRef<T?>
     }
+
+    fun default(value: T): ArgumentRef<T> {
+        definition.optional = true
+        definition.defaultValue = value
+        return this
+    }
+
+    fun suggests(block: SuggestContext.() -> Iterable<String>): ArgumentRef<T> {
+        definition.suggestions = block
+        return this
+    }
+
+    fun validate(
+        message: String? = null,
+        predicate: ValidationContext<T>.() -> Boolean,
+    ): ArgumentRef<T> {
+        definition.validatorMessage = message
+        @Suppress("UNCHECKED_CAST")
+        definition.validator = { predicate(it as ValidationContext<T>) }
+        return this
+    }
+
+    fun description(text: String): ArgumentRef<T> {
+        definition.description = text
+        return this
+    }
 }
 
 @Suppress("UNCHECKED_CAST")
 fun <T> ArgumentRef<T>.optional(): ArgumentRef<T?> = optional()
-
-internal class MutableArgumentDefinition(
-    val slot: Int,
-    val name: String,
-    val parser: DaisyParser<Any?>,
-    var optional: Boolean = false,
-)
-
-internal data class CompiledArgument(
-    val slot: Int,
-    val name: String,
-    val parser: DaisyParser<Any?>,
-    val optional: Boolean,
-)
 
 object Parsers {
     val STRING: DaisyParser<String> =
@@ -181,6 +215,8 @@ object Parsers {
                 return ParseResult.success(input)
             }
         }
+
+    val OPTION_TEXT: DaisyParser<String> = STRING
 
     fun int(
         min: Int = Int.MIN_VALUE,
@@ -273,20 +309,15 @@ object Parsers {
         object : DaisyParser<Boolean> {
             override val displayName: String = "boolean"
 
-            private val trueValues = setOf("true", "yes", "on", "1", "enable", "y")
-            private val falseValues = setOf("false", "no", "off", "0", "disable", "n")
-
             override fun parse(
                 input: String,
                 context: ParseContext,
-            ): ParseResult<Boolean> {
-                val normalized = input.lowercase()
-                return when {
-                    normalized in trueValues -> ParseResult.success(true)
-                    normalized in falseValues -> ParseResult.success(false)
+            ): ParseResult<Boolean> =
+                when (input.lowercase()) {
+                    "true", "yes", "on", "1", "enable", "y" -> ParseResult.success(true)
+                    "false", "no", "off", "0", "disable", "n" -> ParseResult.success(false)
                     else -> ParseResult.failure("'$input' is not a valid boolean.")
                 }
-            }
 
             override fun suggest(context: SuggestContext): List<String> = filterByInput(listOf("true", "false"), context.currentInput)
         }
@@ -302,11 +333,16 @@ object Parsers {
                 context.platform.findPlayer(input)?.let { ParseResult.success(it) }
                     ?: ParseResult.failure("Player '$input' is not online.")
 
-            override fun suggest(context: SuggestContext): List<String> =
-                context.platform
-                    .onlinePlayers()
-                    .map(Player::getName)
-                    .let { filterByInput(it, context.currentInput) }
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>()
+                for (player in context.platform.onlinePlayers()) {
+                    val name = player.name
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                    }
+                }
+                return suggestions
+            }
         }
 
     val OFFLINE_PLAYER: DaisyParser<OfflinePlayer> =
@@ -334,11 +370,16 @@ object Parsers {
                 context.platform.findWorld(input)?.let { ParseResult.success(it) }
                     ?: ParseResult.failure("World '$input' was not found.")
 
-            override fun suggest(context: SuggestContext): List<String> =
-                context.platform
-                    .worlds()
-                    .map(World::getName)
-                    .let { filterByInput(it, context.currentInput) }
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>()
+                for (world in context.platform.worlds()) {
+                    val name = world.name
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                    }
+                }
+                return suggestions
+            }
         }
 
     val MATERIAL: DaisyParser<Material> =
@@ -352,11 +393,19 @@ object Parsers {
                 Material.matchMaterial(input)?.let { ParseResult.success(it) }
                     ?: ParseResult.failure("Material '$input' was not found.")
 
-            override fun suggest(context: SuggestContext): List<String> =
-                Material.entries
-                    .map { it.name.lowercase() }
-                    .let { filterByInput(it, context.currentInput) }
-                    .take(30)
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>()
+                for (material in Material.entries) {
+                    val name = material.name.lowercase()
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                        if (suggestions.size == 30) {
+                            break
+                        }
+                    }
+                }
+                return suggestions
+            }
         }
 
     val GAME_MODE: DaisyParser<GameMode> =
@@ -366,12 +415,25 @@ object Parsers {
             override fun parse(
                 input: String,
                 context: ParseContext,
-            ): ParseResult<GameMode> =
-                GameMode.entries.find { it.name.equals(input, ignoreCase = true) }?.let { ParseResult.success(it) }
-                    ?: ParseResult.failure("Game mode '$input' is invalid.")
+            ): ParseResult<GameMode> {
+                for (mode in GameMode.entries) {
+                    if (mode.name.equals(input, ignoreCase = true)) {
+                        return ParseResult.success(mode)
+                    }
+                }
+                return ParseResult.failure("Game mode '$input' is invalid.")
+            }
 
-            override fun suggest(context: SuggestContext): List<String> =
-                GameMode.entries.map { it.name.lowercase() }.let { filterByInput(it, context.currentInput) }
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>()
+                for (mode in GameMode.entries) {
+                    val name = mode.name.lowercase()
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                    }
+                }
+                return suggestions
+            }
         }
 
     val ENTITY_TYPE: DaisyParser<EntityType> =
@@ -381,16 +443,31 @@ object Parsers {
             override fun parse(
                 input: String,
                 context: ParseContext,
-            ): ParseResult<EntityType> =
-                EntityType.entries.find { it.name.equals(input, ignoreCase = true) }?.let { ParseResult.success(it) }
-                    ?: ParseResult.failure("Entity type '$input' is invalid.")
+            ): ParseResult<EntityType> {
+                for (type in EntityType.entries) {
+                    if (type.name.equals(input, ignoreCase = true)) {
+                        return ParseResult.success(type)
+                    }
+                }
+                return ParseResult.failure("Entity type '$input' is invalid.")
+            }
 
-            override fun suggest(context: SuggestContext): List<String> =
-                EntityType.entries
-                    .filter { it.isSpawnable }
-                    .map { it.name.lowercase() }
-                    .let { filterByInput(it, context.currentInput) }
-                    .take(30)
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>()
+                for (type in EntityType.entries) {
+                    if (!type.isSpawnable) {
+                        continue
+                    }
+                    val name = type.name.lowercase()
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                        if (suggestions.size == 30) {
+                            break
+                        }
+                    }
+                }
+                return suggestions
+            }
         }
 
     val UUID_PARSER: DaisyParser<UUID> =
@@ -411,20 +488,19 @@ object Parsers {
     val DURATION: DaisyParser<Duration> =
         object : DaisyParser<Duration> {
             override val displayName: String = "duration"
-            private val pattern = Regex("""(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?""")
 
             override fun parse(
                 input: String,
                 context: ParseContext,
             ): ParseResult<Duration> {
                 val match =
-                    pattern.matchEntire(input.lowercase())
+                    DURATION_PATTERN.matchEntire(input.lowercase())
                         ?: return ParseResult.failure("Invalid duration. Use values like 30m, 2h, or 1d2h.")
+
                 val days = match.groupValues[1].toLongOrNull() ?: 0L
                 val hours = match.groupValues[2].toLongOrNull() ?: 0L
                 val minutes = match.groupValues[3].toLongOrNull() ?: 0L
                 val seconds = match.groupValues[4].toLongOrNull() ?: 0L
-
                 if (days == 0L && hours == 0L && minutes == 0L && seconds == 0L) {
                     return ParseResult.failure("Duration must be greater than zero.")
                 }
@@ -443,9 +519,9 @@ object Parsers {
         }
 
     fun choice(vararg options: String): DaisyParser<String> {
-        val normalizedToOriginal = LinkedHashMap<String, String>()
+        val byKey = LinkedHashMap<String, String>(options.size)
         for (option in options) {
-            normalizedToOriginal[option.lowercase()] = option
+            byKey[option.lowercase()] = option
         }
 
         return object : DaisyParser<String> {
@@ -455,16 +531,19 @@ object Parsers {
                 input: String,
                 context: ParseContext,
             ): ParseResult<String> =
-                normalizedToOriginal[input.lowercase()]?.let { ParseResult.success(it) }
+                byKey[input.lowercase()]?.let { ParseResult.success(it) }
                     ?: ParseResult.failure("Expected one of: ${options.joinToString(", ")}.")
 
-            override fun suggest(context: SuggestContext): List<String> = filterByInput(options.toList(), context.currentInput)
+            override fun suggest(context: SuggestContext): List<String> = filterByInput(options.asList(), context.currentInput)
         }
     }
 
     inline fun <reified E : Enum<E>> enum(): DaisyParser<E> {
-        val values = enumValues<E>()
-        val valuesByName = values.associateBy { it.name.lowercase() }
+        val entries = enumValues<E>()
+        val byKey = LinkedHashMap<String, E>(entries.size)
+        for (entry in entries) {
+            byKey[entry.name.lowercase()] = entry
+        }
 
         return object : DaisyParser<E> {
             override val displayName: String = "enum"
@@ -473,17 +552,32 @@ object Parsers {
                 input: String,
                 context: ParseContext,
             ): ParseResult<E> =
-                valuesByName[input.lowercase()]?.let { ParseResult.success(it) }
-                    ?: ParseResult.failure("Expected one of: ${values.joinToString(", ") { it.name.lowercase() }}.")
+                byKey[input.lowercase()]?.let { ParseResult.success(it) }
+                    ?: ParseResult.failure("Expected one of: ${entries.joinToString(", ") { it.name.lowercase() }}.")
 
-            override fun suggest(context: SuggestContext): List<String> =
-                filterByInput(values.map { it.name.lowercase() }, context.currentInput)
+            override fun suggest(context: SuggestContext): List<String> {
+                val suggestions = ArrayList<String>(entries.size)
+                for (entry in entries) {
+                    val name = entry.name.lowercase()
+                    if (name.startsWith(context.currentInput, ignoreCase = true)) {
+                        suggestions += name
+                    }
+                }
+                return suggestions
+            }
         }
     }
 }
 
-@PublishedApi
 internal fun filterByInput(
     values: Collection<String>,
     currentInput: String,
-): List<String> = values.filter { it.startsWith(currentInput, ignoreCase = true) }
+): List<String> {
+    val suggestions = ArrayList<String>(values.size)
+    for (value in values) {
+        if (value.startsWith(currentInput, ignoreCase = true)) {
+            suggestions += value
+        }
+    }
+    return suggestions
+}

@@ -32,5 +32,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DaisyCommand
-          path: Jar/*.jar
+          path: build/libs/*.jar
           if-no-files-found: warn

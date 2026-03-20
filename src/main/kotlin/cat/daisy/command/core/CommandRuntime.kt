@@ -2,14 +2,14 @@
 
 package cat.daisy.command.core
 
+import cat.daisy.command.arguments.ArgumentKind
 import cat.daisy.command.arguments.BukkitPlatform
 import cat.daisy.command.arguments.CompiledArgument
-import cat.daisy.command.arguments.DaisyParser
 import cat.daisy.command.arguments.DaisyPlatform
-import cat.daisy.command.arguments.MutableArgumentDefinition
 import cat.daisy.command.arguments.ParseContext
 import cat.daisy.command.arguments.ParseResult
 import cat.daisy.command.arguments.SuggestContext
+import cat.daisy.command.arguments.ValidationContext
 import cat.daisy.command.context.AbortExecution
 import cat.daisy.command.context.CommandContext
 import cat.daisy.command.context.ConsoleCommandContext
@@ -23,9 +23,9 @@ import org.bukkit.entity.Player
 import java.time.Duration
 import java.util.LinkedHashMap
 import java.util.logging.Logger
-import kotlin.ConsistentCopyVisibility
 
 private val HELP_ALIASES = setOf("help", "?")
+private val COMMAND_NAME_PATTERN = Regex("^[a-z0-9][a-z0-9_-]*$")
 
 enum class SenderConstraint {
     ANY,
@@ -37,6 +37,11 @@ data class CooldownSpec(
     val duration: Duration,
     val bypassPermission: String? = null,
     val message: String? = null,
+)
+
+internal class RequirementSpec(
+    val message: String?,
+    val check: CommandContext.() -> Boolean,
 )
 
 internal sealed interface HandlerSpec
@@ -53,8 +58,7 @@ internal class ConsoleHandler(
     val block: ConsoleCommandContext.() -> Unit,
 ) : HandlerSpec
 
-@ConsistentCopyVisibility
-internal data class CommandNodeSpec internal constructor(
+internal data class CommandNodeSpec(
     val name: String,
     val description: String,
     val aliases: List<String>,
@@ -62,9 +66,9 @@ internal data class CommandNodeSpec internal constructor(
     val senderConstraint: SenderConstraint,
     val cooldown: CooldownSpec?,
     val arguments: List<CompiledArgument>,
+    val requirements: List<RequirementSpec>,
     val children: List<CommandNodeSpec>,
     val handler: HandlerSpec?,
-    val usageOverride: String?,
 )
 
 class CommandSpec internal constructor(
@@ -75,9 +79,9 @@ class CommandSpec internal constructor(
     internal val senderConstraint: SenderConstraint,
     internal val cooldown: CooldownSpec?,
     internal val arguments: List<CompiledArgument>,
+    internal val requirements: List<RequirementSpec>,
     internal val children: List<CommandNodeSpec>,
     internal val handler: HandlerSpec?,
-    internal val usageOverride: String?,
 ) {
     internal val compiled: CompiledCommand by lazy(LazyThreadSafetyMode.NONE) {
         CommandCompiler.compile(this)
@@ -86,7 +90,13 @@ class CommandSpec internal constructor(
 
 internal data class CommandRuntime(
     val logger: Logger,
+    val config: DaisyConfig = DaisyConfig(),
     val platform: DaisyPlatform = BukkitPlatform,
+)
+
+internal data class CompiledRequirement(
+    val message: String?,
+    val check: CommandContext.() -> Boolean,
 )
 
 internal data class CompiledCommand(
@@ -101,92 +111,49 @@ internal data class CompiledCommand(
         args: List<String>,
         runtime: CommandRuntime,
     ) {
-        if (!isAccessibleRoot(sender, root)) {
+        if (!hasPermission(sender, root.permissions)) {
+            sender.sendFramework(runtime.config.messages.noPermission, runtime)
+            return
+        }
+        if (!satisfiesConstraint(sender, root.senderConstraint)) {
+            sender.sendFramework(renderConstraintMessage(root.senderConstraint, runtime), runtime)
             return
         }
 
         val resolution = resolveExecutionNode(root, args)
         if (resolution.helpRequested) {
-            sendHelp(sender, resolution.node)
+            sendHelp(sender, resolution.node, runtime)
+            return
+        }
+
+        if (resolution.unknownSubcommand != null) {
+            sender.sendFramework(
+                runtime.config.messages.unknownSubcommand
+                    .replace("{input}", resolution.unknownSubcommand),
+                runtime,
+            )
+            sendHelp(sender, resolution.node, runtime)
             return
         }
 
         val node = resolution.node
-        if (!hasPermission(sender, node)) {
-            sender.sendRich("<red>You do not have permission to use this command.")
+        if (!hasPermission(sender, node.permissions)) {
+            sender.sendFramework(runtime.config.messages.noPermission, runtime)
             return
         }
-        when (node.senderConstraint) {
-            SenderConstraint.PLAYER_ONLY -> {
-                if (sender !is Player) {
-                    sender.sendRich("<red>This command can only be used by a player.")
-                    return
-                }
-            }
-
-            SenderConstraint.CONSOLE_ONLY -> {
-                if (sender !is ConsoleCommandSender) {
-                    sender.sendRich("<red>This command can only be used from the console.")
-                    return
-                }
-            }
-
-            SenderConstraint.ANY -> {
-                Unit
-            }
-        }
-
-        if (resolution.unknownSubcommand != null && node.children.isNotEmpty() && node.arguments.isEmpty()) {
-            sender.sendRich("<red>Unknown subcommand '${resolution.unknownSubcommand}'.")
-            sendHelp(sender, node)
+        if (!satisfiesConstraint(sender, node.senderConstraint)) {
+            sender.sendFramework(renderConstraintMessage(node.senderConstraint, runtime), runtime)
             return
         }
 
         if (node.handler == null && node.children.isNotEmpty() && resolution.remainingArgs.isEmpty()) {
-            sendHelp(sender, node)
+            sendHelp(sender, node, runtime)
             return
         }
 
-        val parsed = parseArguments(node, resolution.remainingArgs, sender, runtime.platform)
-        when (parsed) {
-            is ArgumentParse.Success -> {
-                val cooldown = node.cooldown
-                if (cooldown != null && sender is Player && !bypassesCooldown(sender, cooldown)) {
-                    val remaining = DaisyCooldowns.remaining(sender, node.cooldownKey, cooldown.duration)
-                    if (!remaining.isZero) {
-                        sender.sendRich(renderCooldownMessage(cooldown, remaining))
-                        return
-                    }
-                }
-
-                val context =
-                    createContext(
-                        sender = sender,
-                        label = label,
-                        node = node,
-                        args = resolution.remainingArgs,
-                        resolved = parsed.resolvedArguments,
-                        logger = runtime.logger,
-                    )
-
-                try {
-                    invokeHandler(node.handler, context)
-                    if (cooldown != null && sender is Player && !bypassesCooldown(sender, cooldown) && context.wasSuccessful()) {
-                        DaisyCooldowns.set(sender, node.cooldownKey)
-                    }
-                } catch (_: AbortExecution) {
-                    return
-                } catch (throwable: Throwable) {
-                    sender.sendRich("<red>An internal error occurred while executing this command.")
-                    runtime.logger.severe("Failed to execute /$label ${resolution.remainingArgs.joinToString(" ")}")
-                    runtime.logger.severe(throwable.stackTraceToString())
-                }
-            }
-
-            is ArgumentParse.Failure -> {
-                sender.sendRich("<red>${parsed.message}")
-                sender.sendRich("<gray>Usage: <white>${usageFor(node)}")
-            }
+        when (val parsed = parseArguments(node, resolution.remainingArgs, sender, runtime.platform)) {
+            is ArgumentParse.Failure -> renderArgumentFailure(sender, node, parsed.message, runtime)
+            is ArgumentParse.Success -> executeResolvedNode(sender, label, resolution, node, parsed.arguments, runtime)
         }
     }
 
@@ -195,18 +162,19 @@ internal data class CompiledCommand(
         args: List<String>,
         runtime: CommandRuntime,
     ): List<String> {
-        if (!isAccessibleRoot(sender, root)) {
+        if (!hasPermission(sender, root.permissions) || !satisfiesConstraint(sender, root.senderConstraint)) {
             return emptyList()
         }
 
         if (args.isEmpty()) {
-            return rootSuggestions(root, "", sender, runtime.platform)
+            return distinctSuggestions(
+                childSuggestions(root, "", sender) + suggestArguments(root, emptyList(), sender, runtime.platform),
+            )
         }
 
         var node = root
         var consumed = 0
         val currentIndex = args.lastIndex
-
         while (consumed < currentIndex) {
             val child = node.childrenByKey[args[consumed].normalized()] ?: break
             if (!canView(sender, child)) {
@@ -216,11 +184,11 @@ internal data class CompiledCommand(
             consumed++
         }
 
-        val currentInput = args.last()
-        val nodeArgs = args.drop(consumed)
-        val childSuggestions = rootSuggestions(node, currentInput, sender, runtime.platform)
-        val argumentSuggestions = suggestArguments(node, nodeArgs, sender, runtime.platform)
-        return (childSuggestions + argumentSuggestions).distinct()
+        val remaining = args.drop(consumed)
+        return distinctSuggestions(
+            childSuggestions(node, remaining.lastOrNull().orEmpty(), sender) +
+                suggestArguments(node, remaining, sender, runtime.platform),
+        )
     }
 }
 
@@ -232,12 +200,16 @@ internal data class CompiledNode(
     val permissions: List<String>,
     val senderConstraint: SenderConstraint,
     val cooldown: CooldownSpec?,
-    val arguments: List<CompiledArgument>,
+    val positionals: List<CompiledArgument>,
+    val options: List<CompiledArgument>,
+    val optionByLong: Map<String, CompiledArgument>,
+    val optionByShort: Map<String, CompiledArgument>,
+    val requirements: List<CompiledRequirement>,
     val children: List<CompiledNode>,
     val childrenByKey: Map<String, CompiledNode>,
     val handler: HandlerSpec?,
-    val usageOverride: String?,
     val pathSegments: List<String>,
+    val valueCount: Int,
 ) {
     val pathString: String = pathSegments.joinToString(" ")
     val cooldownKey: String = pathString
@@ -245,7 +217,7 @@ internal data class CompiledNode(
 
 private sealed interface ArgumentParse {
     data class Success(
-        val resolvedArguments: ResolvedArguments,
+        val arguments: ResolvedArguments,
     ) : ArgumentParse
 
     data class Failure(
@@ -271,12 +243,12 @@ private object CommandCompiler {
                 senderConstraint = spec.senderConstraint,
                 cooldown = spec.cooldown,
                 arguments = spec.arguments,
+                requirements = spec.requirements,
                 children = spec.children,
                 handler = spec.handler,
-                usageOverride = spec.usageOverride,
             )
 
-        val root = compileNode(rootSpec, emptyList(), SenderConstraint.ANY, emptyList())
+        val root = compileNode(rootSpec, emptyList(), SenderConstraint.ANY, emptyList(), emptyList())
         return CompiledCommand(spec.name, spec.description, spec.aliases, root)
     }
 
@@ -285,23 +257,57 @@ private object CommandCompiler {
         parentPath: List<String>,
         parentConstraint: SenderConstraint,
         parentPermissions: List<String>,
+        parentRequirements: List<CompiledRequirement>,
     ): CompiledNode {
         validateNode(spec)
         val effectiveConstraint = mergeConstraint(parentConstraint, spec.senderConstraint, spec.name)
+
         val permissions = ArrayList<String>(parentPermissions.size + 1)
         permissions += parentPermissions
-        spec.permission?.let { permissions += it }
+        spec.permission?.let(permissions::add)
 
-        val path = parentPath + spec.name
-        val childNodes = ArrayList<CompiledNode>(spec.children.size)
-        val childrenByKey = LinkedHashMap<String, CompiledNode>()
+        val requirements = ArrayList<CompiledRequirement>(parentRequirements.size + spec.requirements.size)
+        requirements += parentRequirements
+        for (requirement in spec.requirements) {
+            requirements += CompiledRequirement(requirement.message, requirement.check)
+        }
 
+        val pathSegments = parentPath + spec.name
+        val children = ArrayList<CompiledNode>(spec.children.size)
+        val childrenByKey = LinkedHashMap<String, CompiledNode>(spec.children.size * 2)
         for (childSpec in spec.children) {
-            val child = compileNode(childSpec, path, effectiveConstraint, permissions)
-            childNodes += child
+            val child = compileNode(childSpec, pathSegments, effectiveConstraint, permissions, requirements)
+            children += child
             registerChildKey(childrenByKey, child.name, child, spec.name)
             for (alias in child.aliases) {
                 registerChildKey(childrenByKey, alias, child, spec.name)
+            }
+        }
+
+        val positionals = ArrayList<CompiledArgument>()
+        val options = ArrayList<CompiledArgument>()
+        val optionByLong = LinkedHashMap<String, CompiledArgument>()
+        val optionByShort = LinkedHashMap<String, CompiledArgument>()
+        for (argument in spec.arguments) {
+            when (argument.kind) {
+                ArgumentKind.POSITIONAL -> {
+                    positionals += argument
+                }
+
+                ArgumentKind.OPTION,
+                ArgumentKind.FLAG,
+                -> {
+                    options += argument
+                    val longName = requireNotNull(argument.longName)
+                    require(optionByLong.putIfAbsent(longName.normalized(), argument) == null) {
+                        "Duplicate option '--$longName' in '${spec.name}'."
+                    }
+                    argument.shortName?.let { shortName ->
+                        require(optionByShort.putIfAbsent(shortName.normalized(), argument) == null) {
+                            "Duplicate option '-$shortName' in '${spec.name}'."
+                        }
+                    }
+                }
             }
         }
 
@@ -313,60 +319,100 @@ private object CommandCompiler {
             permissions = permissions,
             senderConstraint = effectiveConstraint,
             cooldown = spec.cooldown,
-            arguments = spec.arguments,
-            children = childNodes,
+            positionals = positionals,
+            options = options,
+            optionByLong = optionByLong,
+            optionByShort = optionByShort,
+            requirements = requirements,
+            children = children,
             childrenByKey = childrenByKey,
             handler = spec.handler,
-            usageOverride = spec.usageOverride,
-            pathSegments = path,
+            pathSegments = pathSegments,
+            valueCount = spec.arguments.size,
         )
     }
 
     private fun validateNode(spec: CommandNodeSpec) {
-        require(spec.name.isNotBlank()) { "Command node names cannot be blank." }
+        require(spec.name.matches(COMMAND_NAME_PATTERN)) {
+            "Invalid command node name '${spec.name}'. Use lowercase letters, numbers, dashes, or underscores."
+        }
         if (spec.cooldown != null) {
             require(!spec.cooldown.duration.isZero && !spec.cooldown.duration.isNegative) {
                 "Cooldown for '${spec.name}' must be greater than zero."
             }
         }
 
-        var encounteredOptional = false
-        var encounteredGreedy = false
         val argumentNames = HashSet<String>()
+        var encounteredOptionalPositional = false
+        var encounteredGreedy = false
         for (argument in spec.arguments) {
             check(argumentNames.add(argument.name.normalized())) {
                 "Duplicate argument name '${argument.name}' in '${spec.name}'."
             }
-            if (encounteredGreedy) {
-                error("Greedy argument '${argument.name}' in '${spec.name}' must be the last argument.")
-            }
-            if (!argument.optional && encounteredOptional) {
-                error("Required argument '${argument.name}' in '${spec.name}' cannot follow an optional argument.")
-            }
-            if (argument.optional) {
-                encounteredOptional = true
-            }
-            if (argument.parser.greedy) {
-                encounteredGreedy = true
+
+            when (argument.kind) {
+                ArgumentKind.POSITIONAL -> {
+                    if (encounteredGreedy) {
+                        error("Greedy argument '${argument.name}' in '${spec.name}' must be the last positional argument.")
+                    }
+                    if (!argument.optional && !argument.hasDefault && encounteredOptionalPositional) {
+                        error("Required argument '${argument.name}' in '${spec.name}' cannot follow an optional or defaulted argument.")
+                    }
+                    if (argument.optional || argument.hasDefault) {
+                        encounteredOptionalPositional = true
+                    }
+                    if (argument.parser.greedy) {
+                        encounteredGreedy = true
+                    }
+                }
+
+                ArgumentKind.OPTION -> {
+                    require(!argument.parser.greedy) {
+                        "Option '${argument.name}' in '${spec.name}' cannot use a greedy parser."
+                    }
+                    validateOptionNames(argument, spec.name)
+                }
+
+                ArgumentKind.FLAG -> {
+                    validateOptionNames(argument, spec.name)
+                }
             }
         }
 
-        val children = LinkedHashMap<String, String>()
+        val childKeys = LinkedHashMap<String, String>()
         for (child in spec.children) {
             require(child.name.normalized() !in HELP_ALIASES) {
                 "'${child.name}' is reserved by DaisyCommands for help."
             }
-            registerAlias(children, child.name, child.name, spec.name)
+            registerAlias(childKeys, child.name, child.name, spec.name)
             for (alias in child.aliases) {
                 require(alias.normalized() !in HELP_ALIASES) {
                     "'$alias' is reserved by DaisyCommands for help."
                 }
-                registerAlias(children, alias, child.name, spec.name)
+                require(alias.matches(COMMAND_NAME_PATTERN)) {
+                    "Invalid alias '$alias' in '${spec.name}'."
+                }
+                registerAlias(childKeys, alias, child.name, spec.name)
             }
         }
 
         require(spec.handler != null || spec.children.isNotEmpty()) {
             "Command node '${spec.name}' must define a handler or at least one subcommand."
+        }
+    }
+
+    private fun validateOptionNames(
+        argument: CompiledArgument,
+        nodeName: String,
+    ) {
+        val longName = requireNotNull(argument.longName)
+        require(longName.matches(COMMAND_NAME_PATTERN)) {
+            "Invalid option name '$longName' in '$nodeName'."
+        }
+        argument.shortName?.let { shortName ->
+            require(shortName.length == 1 && shortName[0].isLetterOrDigit()) {
+                "Invalid short option name '$shortName' in '$nodeName'."
+            }
         }
     }
 
@@ -407,6 +453,51 @@ private object CommandCompiler {
     }
 }
 
+private fun executeResolvedNode(
+    sender: CommandSender,
+    label: String,
+    resolution: ExecutionResolution,
+    node: CompiledNode,
+    arguments: ResolvedArguments,
+    runtime: CommandRuntime,
+) {
+    val context = createContext(sender, label, node, resolution.remainingArgs, arguments, runtime)
+    for (requirement in node.requirements) {
+        val passes =
+            try {
+                requirement.check(context)
+            } catch (_: AbortExecution) {
+                return
+            }
+        if (!passes) {
+            context.sendFramework(requirement.message ?: runtime.config.messages.invalidState)
+            return
+        }
+    }
+
+    val cooldown = node.cooldown
+    if (cooldown != null && sender is Player && !bypassesCooldown(sender, cooldown)) {
+        val remaining = DaisyCooldowns.remaining(sender, node.cooldownKey, cooldown.duration)
+        if (!remaining.isZero) {
+            sender.sendFramework(renderCooldownMessage(node, cooldown, remaining, runtime), runtime)
+            return
+        }
+    }
+
+    try {
+        invokeHandler(node.handler, context)
+        if (cooldown != null && sender is Player && !bypassesCooldown(sender, cooldown) && context.wasSuccessful()) {
+            DaisyCooldowns.set(sender, node.cooldownKey)
+        }
+    } catch (_: AbortExecution) {
+        return
+    } catch (throwable: Throwable) {
+        sender.sendFramework(runtime.config.messages.exception, runtime)
+        runtime.logger.severe("Failed to execute /$label ${resolution.remainingArgs.joinToString(" ")}")
+        runtime.logger.severe(throwable.stackTraceToString())
+    }
+}
+
 private fun resolveExecutionNode(
     root: CompiledNode,
     args: List<String>,
@@ -417,8 +508,7 @@ private fun resolveExecutionNode(
     while (index < args.size) {
         val token = args[index]
         val normalized = token.normalized()
-
-        if (normalized in HELP_ALIASES && node.children.isNotEmpty() && index == args.lastIndex) {
+        if (normalized in HELP_ALIASES && index == args.lastIndex) {
             return ExecutionResolution(node = node, remainingArgs = emptyList(), helpRequested = true)
         }
 
@@ -429,13 +519,13 @@ private fun resolveExecutionNode(
 
     val remaining = args.drop(index)
     val unknownSubcommand =
-        if (remaining.isNotEmpty() && node.children.isNotEmpty() && node.arguments.isEmpty() && node.handler == null) {
+        if (remaining.isNotEmpty() && node.children.isNotEmpty() && node.positionals.isEmpty() && node.handler == null) {
             remaining.first()
         } else {
             null
         }
 
-    return ExecutionResolution(node = node, remainingArgs = remaining, unknownSubcommand = unknownSubcommand)
+    return ExecutionResolution(node, remaining, unknownSubcommand, helpRequested = false)
 }
 
 private fun parseArguments(
@@ -444,64 +534,187 @@ private fun parseArguments(
     sender: CommandSender,
     platform: DaisyPlatform,
 ): ArgumentParse {
-    val values = arrayOfNulls<Any?>(node.arguments.size)
-    val valuesByName = LinkedHashMap<String, Any?>(node.arguments.size)
-    var tokenIndex = 0
+    if (node.valueCount == 0) {
+        if (args.isNotEmpty()) {
+            return ArgumentParse.Failure("Too many arguments were provided.")
+        }
+        return ArgumentParse.Success(ResolvedArguments(emptyArray(), emptyMap()))
+    }
 
-    for (argument in node.arguments) {
+    val values = arrayOfNulls<Any?>(node.valueCount)
+    val valuesByName = LinkedHashMap<String, Any?>(node.valueCount)
+    val positionalTokens = ArrayList<String>(args.size)
+    val seenOptions = HashSet<String>(node.options.size)
+    var index = 0
+    var optionParsing = true
+
+    while (index < args.size) {
+        val token = args[index]
+        if (optionParsing && token == "--") {
+            optionParsing = false
+            index++
+            continue
+        }
+
+        if (optionParsing && token.startsWith("--") && token.length > 2) {
+            val rawName = token.substring(2)
+            val option =
+                node.optionByLong[rawName.normalized()]
+                    ?: return ArgumentParse.Failure("Unknown option '--$rawName'.")
+            if (!seenOptions.add(option.name.normalized())) {
+                return ArgumentParse.Failure("Option '--${option.longName}' may only be provided once.")
+            }
+            if (option.kind == ArgumentKind.FLAG) {
+                values[option.slot] = true
+                valuesByName[option.name] = true
+                index++
+                continue
+            }
+
+            val rawValue =
+                args.getOrNull(index + 1)
+                    ?: return ArgumentParse.Failure("Option '--${option.longName}' requires a value.")
+            if (rawValue == "--") {
+                return ArgumentParse.Failure("Option '--${option.longName}' requires a value.")
+            }
+            when (val parsed = parseValue(option, rawValue, sender, platform, node.pathSegments, valuesByName)) {
+                is ParseValueResult.Failure -> {
+                    return ArgumentParse.Failure(parsed.message)
+                }
+
+                is ParseValueResult.Success -> {
+                    values[option.slot] = parsed.value
+                    valuesByName[option.name] = parsed.value
+                }
+            }
+            index += 2
+            continue
+        }
+
+        if (optionParsing && token.startsWith("-") && token.length == 2) {
+            val rawName = token.substring(1)
+            val option = node.optionByShort[rawName.normalized()]
+            if (option != null) {
+                if (!seenOptions.add(option.name.normalized())) {
+                    return ArgumentParse.Failure("Option '--${option.longName}' may only be provided once.")
+                }
+                if (option.kind == ArgumentKind.FLAG) {
+                    values[option.slot] = true
+                    valuesByName[option.name] = true
+                    index++
+                    continue
+                }
+
+                val rawValue =
+                    args.getOrNull(index + 1)
+                        ?: return ArgumentParse.Failure("Option '-${option.shortName}' requires a value.")
+                if (rawValue == "--") {
+                    return ArgumentParse.Failure("Option '-${option.shortName}' requires a value.")
+                }
+                when (val parsed = parseValue(option, rawValue, sender, platform, node.pathSegments, valuesByName)) {
+                    is ParseValueResult.Failure -> {
+                        return ArgumentParse.Failure(parsed.message)
+                    }
+
+                    is ParseValueResult.Success -> {
+                        values[option.slot] = parsed.value
+                        valuesByName[option.name] = parsed.value
+                    }
+                }
+                index += 2
+                continue
+            }
+        }
+
+        positionalTokens += token
+        index++
+    }
+
+    for (option in node.options) {
+        if (valuesByName.containsKey(option.name)) {
+            continue
+        }
+        when {
+            option.kind == ArgumentKind.FLAG -> {
+                values[option.slot] = false
+                valuesByName[option.name] = false
+            }
+
+            option.hasDefault -> {
+                values[option.slot] = option.defaultValue
+                valuesByName[option.name] = option.defaultValue
+            }
+
+            option.optional -> {
+                valuesByName[option.name] = null
+            }
+
+            else -> {
+                return ArgumentParse.Failure("Missing option '--${option.longName}'.")
+            }
+        }
+    }
+
+    var positionalIndex = 0
+    var tokenIndex = 0
+    while (positionalIndex < node.positionals.size) {
+        val argument = node.positionals[positionalIndex]
         val rawValue =
             if (argument.parser.greedy) {
-                if (tokenIndex < args.size) {
-                    args.drop(tokenIndex).joinToString(" ")
+                if (tokenIndex < positionalTokens.size) {
+                    positionalTokens.drop(tokenIndex).joinToString(" ")
                 } else {
                     null
                 }
             } else {
-                args.getOrNull(tokenIndex)
+                positionalTokens.getOrNull(tokenIndex)
             }
 
         if (rawValue == null) {
-            if (argument.optional) {
-                valuesByName[argument.name] = null
-                continue
+            when {
+                argument.hasDefault -> {
+                    values[argument.slot] = argument.defaultValue
+                    valuesByName[argument.name] = argument.defaultValue
+                }
+
+                argument.optional -> {
+                    valuesByName[argument.name] = null
+                }
+
+                else -> {
+                    return ArgumentParse.Failure("Missing argument <${argument.name}>.")
+                }
             }
-            return ArgumentParse.Failure("Missing argument <${argument.name}>.")
+            positionalIndex++
+            continue
         }
 
-        val parseResult =
-            argument.parser.parse(
-                rawValue,
-                ParseContext(
-                    sender = sender,
-                    platform = platform,
-                    commandPath = node.pathSegments,
-                    argumentName = argument.name,
-                ),
-            )
-        when (parseResult) {
-            is ParseResult.Success -> {
-                values[argument.slot] = parseResult.value
-                valuesByName[argument.name] = parseResult.value
+        when (val parsed = parseValue(argument, rawValue, sender, platform, node.pathSegments, valuesByName)) {
+            is ParseValueResult.Failure -> {
+                return ArgumentParse.Failure(parsed.message)
             }
 
-            is ParseResult.Failure -> {
-                return ArgumentParse.Failure(parseResult.error)
+            is ParseValueResult.Success -> {
+                values[argument.slot] = parsed.value
+                valuesByName[argument.name] = parsed.value
             }
         }
 
         if (argument.parser.greedy) {
-            tokenIndex = args.size
+            tokenIndex = positionalTokens.size
+            positionalIndex++
             break
         }
 
         tokenIndex++
+        positionalIndex++
     }
 
-    if (tokenIndex < args.size) {
+    if (tokenIndex < positionalTokens.size) {
         return ArgumentParse.Failure("Too many arguments were provided.")
     }
 
-    for (argument in node.arguments) {
+    for (argument in node.positionals) {
         if (!valuesByName.containsKey(argument.name)) {
             valuesByName[argument.name] = null
         }
@@ -510,40 +723,75 @@ private fun parseArguments(
     return ArgumentParse.Success(ResolvedArguments(values, valuesByName))
 }
 
+private sealed interface ParseValueResult {
+    data class Success(
+        val value: Any?,
+    ) : ParseValueResult
+
+    data class Failure(
+        val message: String,
+    ) : ParseValueResult
+}
+
+private fun parseValue(
+    argument: CompiledArgument,
+    rawValue: String,
+    sender: CommandSender,
+    platform: DaisyPlatform,
+    pathSegments: List<String>,
+    previousArguments: Map<String, Any?>,
+): ParseValueResult {
+    val parsed =
+        argument.parser.parse(
+            rawValue,
+            ParseContext(
+                sender = sender,
+                platform = platform,
+                commandPath = pathSegments,
+                argumentName = argument.name,
+                previousArguments = previousArguments,
+            ),
+        )
+
+    val value =
+        when (parsed) {
+            is ParseResult.Failure -> return ParseValueResult.Failure(parsed.error)
+            is ParseResult.Success -> parsed.value
+        }
+
+    val validator = argument.validator
+    if (validator != null) {
+        val passes =
+            validator(
+                ValidationContext(
+                    sender = sender,
+                    platform = platform,
+                    commandPath = pathSegments,
+                    argumentName = argument.name,
+                    value = value,
+                    previousArguments = previousArguments,
+                ),
+            )
+        if (!passes) {
+            return ParseValueResult.Failure(argument.validatorMessage ?: "Invalid value for <${argument.name}>.")
+        }
+    }
+
+    return ParseValueResult.Success(value)
+}
+
 private fun createContext(
     sender: CommandSender,
     label: String,
     node: CompiledNode,
     args: List<String>,
-    resolved: ResolvedArguments,
-    logger: Logger,
+    arguments: ResolvedArguments,
+    runtime: CommandRuntime,
 ): CommandContext =
     when (sender) {
-        is Player -> {
-            PlayerCommandContext(
-                player = sender,
-                label = label,
-                path = node.pathSegments,
-                args = args,
-                resolvedArguments = resolved,
-                logger = logger,
-            )
-        }
-
-        is ConsoleCommandSender -> {
-            ConsoleCommandContext(
-                console = sender,
-                label = label,
-                path = node.pathSegments,
-                args = args,
-                resolvedArguments = resolved,
-                logger = logger,
-            )
-        }
-
-        else -> {
-            CommandContext(sender, label, node.pathSegments, args, resolved, logger)
-        }
+        is Player -> PlayerCommandContext(sender, label, node.pathSegments, args, arguments, runtime)
+        is ConsoleCommandSender -> ConsoleCommandContext(sender, label, node.pathSegments, args, arguments, runtime)
+        else -> CommandContext(sender, label, node.pathSegments, args, arguments, runtime)
     }
 
 private fun invokeHandler(
@@ -551,25 +799,10 @@ private fun invokeHandler(
     context: CommandContext,
 ) {
     when (handler) {
-        null -> {
-            context.fail("Usage: ${context.path.joinToString(" ")}")
-        }
-
-        is AnyHandler -> {
-            handler.block(context)
-        }
-
-        is PlayerHandler -> {
-            val playerContext =
-                context as? PlayerCommandContext ?: context.fail("This command can only be used by a player.")
-            handler.block(playerContext)
-        }
-
-        is ConsoleHandler -> {
-            val consoleContext =
-                context as? ConsoleCommandContext ?: context.fail("This command can only be used from the console.")
-            handler.block(consoleContext)
-        }
+        null -> context.fail("Usage: /${context.path.joinToString(" ")}")
+        is AnyHandler -> handler.block(context)
+        is PlayerHandler -> handler.block(context as PlayerCommandContext)
+        is ConsoleHandler -> handler.block(context as ConsoleCommandContext)
     }
 }
 
@@ -579,87 +812,197 @@ private fun suggestArguments(
     sender: CommandSender,
     platform: DaisyPlatform,
 ): List<String> {
-    if (node.arguments.isEmpty()) {
-        return emptyList()
+    val currentInput = nodeArgs.lastOrNull().orEmpty()
+    val previousTokens = if (nodeArgs.isEmpty()) emptyList() else nodeArgs.dropLast(1)
+    val state = analyzeSuggestionState(node, previousTokens, sender, platform) ?: return emptyList()
+
+    state.pendingOption?.let {
+        return suggestForArgument(it, currentInput, sender, platform, node.pathSegments, state.valuesByName)
     }
 
-    val currentTokenIndex = if (nodeArgs.isEmpty()) 0 else nodeArgs.lastIndex
-    val valuesByName = LinkedHashMap<String, Any?>(node.arguments.size)
-    var tokenIndex = 0
-
-    for (argument in node.arguments) {
-        if (argument.parser.greedy) {
-            val currentInput = if (nodeArgs.isEmpty()) "" else nodeArgs.drop(tokenIndex).joinToString(" ")
-            return argument.parser.suggest(
-                SuggestContext(
-                    sender = sender,
-                    platform = platform,
-                    commandPath = node.pathSegments,
-                    argumentIndex = argument.slot,
-                    currentInput = currentInput,
-                    previousArguments = valuesByName,
-                ),
-            )
-        }
-
-        if (tokenIndex == currentTokenIndex) {
-            val currentInput = nodeArgs.getOrNull(tokenIndex).orEmpty()
-            return argument.parser.suggest(
-                SuggestContext(
-                    sender = sender,
-                    platform = platform,
-                    commandPath = node.pathSegments,
-                    argumentIndex = argument.slot,
-                    currentInput = currentInput,
-                    previousArguments = valuesByName,
-                ),
-            )
-        }
-
-        val rawValue = nodeArgs.getOrNull(tokenIndex)
-        if (rawValue == null) {
-            if (argument.optional) {
-                valuesByName[argument.name] = null
-                continue
-            }
-            return emptyList()
-        }
-
-        val parseResult =
-            argument.parser.parse(
-                rawValue,
-                ParseContext(
-                    sender = sender,
-                    platform = platform,
-                    commandPath = node.pathSegments,
-                    argumentName = argument.name,
-                ),
-            )
-        val parsedValue = (parseResult as? ParseResult.Success)?.value ?: return emptyList()
-        valuesByName[argument.name] = parsedValue
-        tokenIndex++
+    if (state.optionParsing && currentInput.startsWith("-")) {
+        return availableOptionSuggestions(node, currentInput, state.seenOptionNames)
     }
 
-    return emptyList()
+    val nextArgument = node.positionals.getOrNull(state.positionalIndex)
+    val positionalSuggestions =
+        if (nextArgument != null) {
+            suggestForArgument(nextArgument, currentInput, sender, platform, node.pathSegments, state.valuesByName)
+        } else {
+            emptyList()
+        }
+
+    if (!state.optionParsing || (currentInput.isNotEmpty() && !currentInput.startsWith("-"))) {
+        return positionalSuggestions
+    }
+
+    return positionalSuggestions + availableOptionSuggestions(node, currentInput, state.seenOptionNames)
 }
 
-private fun rootSuggestions(
+private data class SuggestionState(
+    val valuesByName: LinkedHashMap<String, Any?>,
+    val seenOptionNames: HashSet<String>,
+    val positionalIndex: Int,
+    val optionParsing: Boolean,
+    val pendingOption: CompiledArgument?,
+)
+
+private fun analyzeSuggestionState(
     node: CompiledNode,
+    tokens: List<String>,
+    sender: CommandSender,
+    platform: DaisyPlatform,
+): SuggestionState? {
+    val valuesByName = LinkedHashMap<String, Any?>()
+    val seenOptionNames = HashSet<String>()
+    var positionalIndex = 0
+    var optionParsing = true
+    var pendingOption: CompiledArgument? = null
+    var index = 0
+
+    while (index < tokens.size) {
+        val token = tokens[index]
+        if (pendingOption != null) {
+            when (val parsed = parseValue(pendingOption, token, sender, platform, node.pathSegments, valuesByName)) {
+                is ParseValueResult.Failure -> {
+                    return null
+                }
+
+                is ParseValueResult.Success -> {
+                    valuesByName[pendingOption.name] = parsed.value
+                    pendingOption = null
+                    index++
+                    continue
+                }
+            }
+        }
+
+        if (optionParsing && token == "--") {
+            optionParsing = false
+            index++
+            continue
+        }
+
+        if (optionParsing && token.startsWith("--") && token.length > 2) {
+            val option = node.optionByLong[token.substring(2).normalized()] ?: return null
+            if (!seenOptionNames.add(option.name.normalized())) {
+                return null
+            }
+            if (option.kind == ArgumentKind.FLAG) {
+                valuesByName[option.name] = true
+            } else {
+                pendingOption = option
+            }
+            index++
+            continue
+        }
+
+        if (optionParsing && token.startsWith("-") && token.length == 2) {
+            val option = node.optionByShort[token.substring(1).normalized()]
+            if (option != null) {
+                if (!seenOptionNames.add(option.name.normalized())) {
+                    return null
+                }
+                if (option.kind == ArgumentKind.FLAG) {
+                    valuesByName[option.name] = true
+                } else {
+                    pendingOption = option
+                }
+                index++
+                continue
+            }
+        }
+
+        val positional = node.positionals.getOrNull(positionalIndex) ?: return null
+        if (positional.parser.greedy) {
+            val rawValue = tokens.drop(index).joinToString(" ")
+            when (val parsed = parseValue(positional, rawValue, sender, platform, node.pathSegments, valuesByName)) {
+                is ParseValueResult.Failure -> return null
+                is ParseValueResult.Success -> valuesByName[positional.name] = parsed.value
+            }
+            positionalIndex++
+            index = tokens.size
+            continue
+        }
+
+        when (val parsed = parseValue(positional, token, sender, platform, node.pathSegments, valuesByName)) {
+            is ParseValueResult.Failure -> return null
+            is ParseValueResult.Success -> valuesByName[positional.name] = parsed.value
+        }
+        positionalIndex++
+        index++
+    }
+
+    return SuggestionState(valuesByName, seenOptionNames, positionalIndex, optionParsing, pendingOption)
+}
+
+private fun suggestForArgument(
+    argument: CompiledArgument,
     currentInput: String,
     sender: CommandSender,
     platform: DaisyPlatform,
+    pathSegments: List<String>,
+    previousArguments: Map<String, Any?>,
+): List<String> {
+    val context =
+        SuggestContext(
+            sender = sender,
+            platform = platform,
+            commandPath = pathSegments,
+            argumentName = argument.name,
+            currentInput = currentInput,
+            previousArguments = previousArguments,
+        )
+
+    val suggestions = argument.suggestions?.invoke(context)?.toList() ?: argument.parser.suggest(context)
+    return filterByPrefix(suggestions, currentInput)
+}
+
+private fun availableOptionSuggestions(
+    node: CompiledNode,
+    currentInput: String,
+    seenOptionNames: Set<String>,
+): List<String> {
+    val suggestions = ArrayList<String>()
+    for (option in node.options) {
+        if (option.name.normalized() in seenOptionNames) {
+            continue
+        }
+        val longName = "--${option.longName}"
+        if (longName.startsWith(currentInput, ignoreCase = true)) {
+            suggestions += longName
+        }
+        option.shortName?.let { shortName ->
+            val shortForm = "-$shortName"
+            if (shortForm.startsWith(currentInput, ignoreCase = true)) {
+                suggestions += shortForm
+            }
+        }
+    }
+    return suggestions
+}
+
+private fun childSuggestions(
+    node: CompiledNode,
+    currentInput: String,
+    sender: CommandSender,
 ): List<String> {
     if (node.children.isEmpty()) {
         return emptyList()
     }
 
-    val suggestions = ArrayList<String>(node.children.size)
+    val suggestions = ArrayList<String>()
     for (child in node.children) {
         if (!canView(sender, child)) {
             continue
         }
         if (child.name.startsWith(currentInput, ignoreCase = true)) {
             suggestions += child.name
+        }
+        for (alias in child.aliases) {
+            if (alias.startsWith(currentInput, ignoreCase = true)) {
+                suggestions += alias
+            }
         }
     }
     return suggestions
@@ -668,63 +1011,160 @@ private fun rootSuggestions(
 private fun sendHelp(
     sender: CommandSender,
     node: CompiledNode,
+    runtime: CommandRuntime,
 ) {
-    sender.sendRich("<gold>/${node.pathString}</gold>${if (node.description.isNotBlank()) " <gray>- ${node.description}" else ""}")
+    sender.sendRich(defaultHelpHeader(node, runtime), runtime)
+    sender.sendRich(
+        runtime.config.messages.usageLabel
+            .replace("{usage}", usageFor(node)),
+        runtime,
+    )
 
-    if (node.handler != null) {
-        sender.sendRich("<gray>Usage: <white>${usageFor(node)}")
+    for (child in node.children) {
+        if (!canView(sender, child)) {
+            continue
+        }
+        val rendered =
+            runtime.config.messages.helpEntryRenderer?.render(
+                DaisyHelpEntryRenderContext(
+                    parentPath = node.pathString,
+                    childPath = child.pathString,
+                    description = child.description,
+                ),
+                runtime.config.theme,
+            ) ?: defaultHelpEntry(child, runtime)
+        sender.sendRich(rendered, runtime)
     }
 
-    if (node.children.isNotEmpty()) {
-        for (child in node.children) {
-            if (!canView(sender, child)) {
-                continue
-            }
-            sender.sendRich(
-                "<yellow>/${child.pathString}</yellow>${if (child.description.isNotBlank()) " <gray>- ${child.description}" else ""}",
-            )
-        }
+    runtime.config.messages.helpFooter?.takeIf(String::isNotBlank)?.let { footer ->
+        sender.sendRich(footer, runtime)
     }
 }
 
 private fun usageFor(node: CompiledNode): String {
-    node.usageOverride?.takeIf(String::isNotBlank)?.let { return it }
     val builder = StringBuilder("/").append(node.pathString)
-    for (argument in node.arguments) {
-        if (argument.optional) {
-            builder.append(" [").append(argument.name)
-        } else {
-            builder.append(" <").append(argument.name)
+    for (option in node.options) {
+        builder.append(" [--").append(option.longName)
+        if (option.kind == ArgumentKind.OPTION) {
+            builder.append(" <").append(option.name).append(">")
         }
+        builder.append(']')
+    }
+    for (argument in node.positionals) {
+        val opening = if (argument.optional || argument.hasDefault) " [" else " <"
+        val closing = if (argument.optional || argument.hasDefault) "]" else ">"
+        builder.append(opening).append(argument.name)
         if (argument.parser.greedy) {
             builder.append("...")
         }
-        builder.append(if (argument.optional) "]" else ">")
+        builder.append(closing)
     }
     return builder.toString()
 }
 
+private fun defaultHelpHeader(
+    node: CompiledNode,
+    runtime: CommandRuntime,
+): String {
+    val theme = runtime.config.theme
+    val descriptionSuffix =
+        if (node.description.isBlank()) {
+            ""
+        } else {
+            " <${theme.descriptionColor}>- ${node.description}</${theme.descriptionColor}>"
+        }
+    return "<${theme.commandColor}>/${node.pathString}</${theme.commandColor}>$descriptionSuffix"
+}
+
+private fun defaultHelpEntry(
+    child: CompiledNode,
+    runtime: CommandRuntime,
+): String {
+    val theme = runtime.config.theme
+    val descriptionSuffix =
+        if (child.description.isBlank()) {
+            ""
+        } else {
+            " <${theme.descriptionColor}>- ${child.description}</${theme.descriptionColor}>"
+        }
+    return "<${theme.accentColor}>/${child.pathString}</${theme.accentColor}>$descriptionSuffix"
+}
+
+private fun renderArgumentFailure(
+    sender: CommandSender,
+    node: CompiledNode,
+    message: String,
+    runtime: CommandRuntime,
+) {
+    val rendered =
+        runtime.config.messages.argumentErrorRenderer?.render(
+            DaisyArgumentErrorRenderContext(
+                usage = usageFor(node),
+                message = message,
+            ),
+            runtime.config.theme,
+        ) ?: runtime.config.messages.invalidArgument
+            .replace("{message}", message)
+    sender.sendRich(rendered, runtime)
+    sender.sendRich(
+        runtime.config.messages.usageLabel
+            .replace("{usage}", usageFor(node)),
+        runtime,
+    )
+}
+
+private fun renderCooldownMessage(
+    node: CompiledNode,
+    cooldown: CooldownSpec,
+    remaining: Duration,
+    runtime: CommandRuntime,
+): String {
+    cooldown.message?.let { template ->
+        return template.replace("{remaining}", DaisyCooldowns.format(remaining))
+    }
+
+    runtime.config.messages.cooldownRenderer?.let { renderer ->
+        return renderer.render(
+            DaisyCooldownRenderContext(
+                commandPath = node.pathString,
+                remaining = remaining,
+                formattedRemaining = DaisyCooldowns.format(remaining),
+            ),
+            runtime.config.theme,
+        )
+    }
+
+    return "<${runtime.config.theme.errorColor}>You must wait <${runtime.config.theme.accentColor}>${DaisyCooldowns.format(
+        remaining,
+    )}</${runtime.config.theme.accentColor}><${runtime.config.theme.errorColor}> before using this command again."
+}
+
+private fun renderConstraintMessage(
+    constraint: SenderConstraint,
+    runtime: CommandRuntime,
+): String =
+    when (constraint) {
+        SenderConstraint.ANY -> runtime.config.messages.invalidState
+        SenderConstraint.PLAYER_ONLY -> runtime.config.messages.playerOnly
+        SenderConstraint.CONSOLE_ONLY -> runtime.config.messages.consoleOnly
+    }
+
 private fun canView(
     sender: CommandSender,
     node: CompiledNode,
-): Boolean = hasPermission(sender, node) && satisfiesConstraint(sender, node.senderConstraint)
+): Boolean = hasPermission(sender, node.permissions) && satisfiesConstraint(sender, node.senderConstraint)
 
 private fun hasPermission(
     sender: CommandSender,
-    node: CompiledNode,
+    permissions: List<String>,
 ): Boolean {
-    for (permission in node.permissions) {
+    for (permission in permissions) {
         if (!sender.hasPermission(permission)) {
             return false
         }
     }
     return true
 }
-
-private fun isAccessibleRoot(
-    sender: CommandSender,
-    node: CompiledNode,
-): Boolean = hasPermission(sender, node) && satisfiesConstraint(sender, node.senderConstraint)
 
 private fun satisfiesConstraint(
     sender: CommandSender,
@@ -736,22 +1176,52 @@ private fun satisfiesConstraint(
         SenderConstraint.CONSOLE_ONLY -> sender is ConsoleCommandSender
     }
 
-private fun renderCooldownMessage(
-    cooldown: CooldownSpec,
-    remaining: Duration,
-): String {
-    val formatted = DaisyCooldowns.format(remaining)
-    val template = cooldown.message ?: "<red>You must wait <white>{remaining}</white><red> before using this command again."
-    return template.replace("{remaining}", formatted)
-}
-
 private fun bypassesCooldown(
     sender: Player,
     cooldown: CooldownSpec,
 ): Boolean = cooldown.bypassPermission?.let(sender::hasPermission) == true
 
-private fun CommandSender.sendRich(message: String) {
-    sendMessage(message.mm())
+private fun distinctSuggestions(values: List<String>): List<String> {
+    if (values.isEmpty()) {
+        return emptyList()
+    }
+
+    val unique = LinkedHashMap<String, String>(values.size)
+    for (value in values) {
+        unique.putIfAbsent(value.lowercase(), value)
+    }
+    return unique.values.toList()
+}
+
+private fun filterByPrefix(
+    values: List<String>,
+    currentInput: String,
+): List<String> {
+    if (currentInput.isEmpty()) {
+        return distinctSuggestions(values)
+    }
+
+    val filtered = ArrayList<String>(values.size)
+    for (value in values) {
+        if (value.startsWith(currentInput, ignoreCase = true)) {
+            filtered += value
+        }
+    }
+    return distinctSuggestions(filtered)
+}
+
+private fun CommandSender.sendFramework(
+    message: String,
+    runtime: CommandRuntime,
+) {
+    sendRich(message, runtime)
+}
+
+private fun CommandSender.sendRich(
+    message: String,
+    runtime: CommandRuntime,
+) {
+    sendMessage((runtime.config.messages.prefix + message).mm())
 }
 
 private fun String.normalized(): String = lowercase()

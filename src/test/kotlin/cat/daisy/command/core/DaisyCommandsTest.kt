@@ -5,7 +5,6 @@ import cat.daisy.command.arguments.DaisyPlatform
 import cat.daisy.command.arguments.ParseContext
 import cat.daisy.command.arguments.ParseResult
 import cat.daisy.command.arguments.SuggestContext
-import cat.daisy.command.arguments.optional
 import cat.daisy.command.cooldown.DaisyCooldowns
 import cat.daisy.command.dsl.command
 import net.kyori.adventure.text.Component
@@ -24,6 +23,7 @@ import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+import java.time.Duration
 import java.util.UUID
 import java.util.logging.Logger
 
@@ -37,39 +37,98 @@ class DaisyCommandsTest {
     }
 
     @Test
-    fun `typed arguments are resolved through argument refs`() {
+    fun `typed refs resolve positionals flags and options`() {
         val alice = player("Alice")
         val bob = player("Bob")
         val runtime = runtime(players = listOf(alice, bob))
 
-        var inviterName = ""
-        var targetName = ""
+        var invited = ""
+        var silentInvite = false
+        var expirySeconds = 0L
 
         val spec =
             command("island") {
                 sub("invite") {
                     val target = player("target")
+                    val silent = flag("silent", "s")
+                    val expires = durationOption("expires", "e").default(Duration.ofMinutes(5))
 
                     executePlayer {
-                        inviterName = player.name
-                        targetName = target().name
+                        invited = target().name
+                        silentInvite = silent()
+                        expirySeconds = expires().seconds
                     }
                 }
             }
 
-        spec.compiled.execute(alice, "island", listOf("invite", "Bob"), runtime)
+        spec.compiled.execute(alice, "island", listOf("invite", "--expires", "30s", "-s", "Bob"), runtime)
 
-        assertEquals("Alice", inviterName)
-        assertEquals("Bob", targetName)
+        assertEquals("Bob", invited)
+        assertTrue(silentInvite)
+        assertEquals(30L, expirySeconds)
     }
 
     @Test
-    fun `help output hides subcommands without permission`() {
+    fun `options can appear after positionals and sentinel stops option parsing`() {
+        val alice = player("Alice")
+        val runtime = runtime(players = listOf(alice))
+
+        var rawMessage = ""
+        var announce = false
+
+        val spec =
+            command("mail") {
+                val target = string("target")
+                val message = text("message")
+                val broadcast = flag("broadcast", "b")
+
+                executePlayer {
+                    rawMessage = "${target()}:${message()}"
+                    announce = broadcast()
+                }
+            }
+
+        spec.compiled.execute(alice, "mail", listOf("Bob", "--", "--broadcast", "hello", "there", "-b"), runtime)
+        assertEquals("Bob:--broadcast hello there -b", rawMessage)
+        assertFalse(announce)
+
+        spec.compiled.execute(alice, "mail", listOf("Bob", "hello", "--broadcast"), runtime)
+        assertTrue(announce)
+    }
+
+    @Test
+    fun `requirements are inherited and stop execution with custom message`() {
+        val alice = player("Alice")
+        val runtime = runtime(players = listOf(alice))
+        var executed = false
+
+        val spec =
+            command("island") {
+                playerOnly()
+                requires("Own an island first.") { false }
+
+                sub("home") {
+                    executePlayer {
+                        executed = true
+                    }
+                }
+            }
+
+        spec.compiled.execute(alice, "island", listOf("home"), runtime)
+
+        assertFalse(executed)
+        assertTrue(sentMessages(alice).any { it.contains("Own an island first.") })
+    }
+
+    @Test
+    fun `help output hides children without permission and includes usage`() {
         val sender = sender("Console")
         val runtime = runtime()
 
         val spec =
             command("team") {
+                description("Team management")
+
                 sub("open") {
                     description("Open to everyone")
                     execute { }
@@ -85,6 +144,8 @@ class DaisyCommandsTest {
         spec.compiled.execute(sender, "team", emptyList(), runtime)
 
         val messages = sentMessages(sender)
+        assertTrue(messages.any { it.contains("/team") })
+        assertTrue(messages.any { it.contains("Usage: /team") })
         assertTrue(messages.any { it.contains("/team open") })
         assertFalse(messages.any { it.contains("/team secret") })
     }
@@ -97,10 +158,10 @@ class DaisyCommandsTest {
         var failedExecutions = 0
         val failing =
             command("heal") {
-                cooldown(java.time.Duration.ofSeconds(30))
+                cooldown(Duration.ofSeconds(30))
                 executePlayer {
                     failedExecutions++
-                    error("Nope")
+                    fail("Nope")
                 }
             }
 
@@ -111,7 +172,7 @@ class DaisyCommandsTest {
         var successfulExecutions = 0
         val successful =
             command("warp") {
-                cooldown(java.time.Duration.ofSeconds(30))
+                cooldown(Duration.ofSeconds(30))
                 executePlayer {
                     successfulExecutions++
                 }
@@ -119,12 +180,37 @@ class DaisyCommandsTest {
 
         successful.compiled.execute(player, "warp", emptyList(), runtime)
         successful.compiled.execute(player, "warp", emptyList(), runtime)
+
         assertEquals(1, successfulExecutions)
         assertTrue(sentMessages(player).any { it.contains("wait", ignoreCase = true) })
     }
 
     @Test
-    fun `custom parser suggestions can see previous parsed arguments`() {
+    fun `suggestions include aliases option names and option values`() {
+        val alice = player("Alice")
+        val bob = player("Bob")
+        val runtime = runtime(players = listOf(alice, bob))
+
+        val spec =
+            command("island") {
+                sub("invite") {
+                    aliases("add")
+                    val target = player("target")
+                    durationOption("expires", "e")
+                    executePlayer {
+                        target().name
+                    }
+                }
+            }
+
+        assertTrue(spec.compiled.suggest(alice, listOf("a"), runtime).contains("add"))
+        assertTrue(spec.compiled.suggest(alice, listOf("invite", "--e"), runtime).contains("--expires"))
+        assertTrue(spec.compiled.suggest(alice, listOf("invite", "--expires", ""), runtime).contains("30m"))
+        assertTrue(spec.compiled.suggest(alice, listOf("invite", ""), runtime).contains("Alice"))
+    }
+
+    @Test
+    fun `custom parser suggestions can use previous parsed arguments`() {
         val player = player("Alice")
         val runtime = runtime(players = listOf(player))
 
@@ -154,8 +240,36 @@ class DaisyCommandsTest {
                 }
             }
 
-        val suggestions = spec.compiled.suggest(player, listOf("set", "public", ""), runtime)
-        assertEquals(listOf("spawn", "market"), suggestions)
+        assertEquals(listOf("spawn", "market"), spec.compiled.suggest(player, listOf("set", "public", ""), runtime))
+    }
+
+    @Test
+    fun `custom message hooks are applied`() {
+        val player = player("Alice")
+        val runtime =
+            runtime(
+                players = listOf(player),
+                config =
+                    DaisyConfig(
+                        messages =
+                            DaisyMessages().apply {
+                                prefix = ""
+                                argumentErrorRenderer =
+                                    DaisyArgumentErrorRenderer { context, _ ->
+                                        "Custom error: ${context.message}"
+                                    }
+                            },
+                    ),
+            )
+
+        val spec =
+            command("coins") {
+                int("amount")
+                executePlayer { }
+            }
+
+        spec.compiled.execute(player, "coins", listOf("oops"), runtime)
+        assertTrue(sentMessages(player).any { it.contains("Custom error:") })
     }
 
     @Test
@@ -187,7 +301,7 @@ class DaisyCommandsTest {
     }
 
     @Test
-    fun `invalid command structures fail fast at compile time`() {
+    fun `invalid command structures fail fast`() {
         val duplicateAlias =
             command("root") {
                 sub("create") {
@@ -213,6 +327,17 @@ class DaisyCommandsTest {
         assertThrows<IllegalStateException> {
             invalidArgs.compiled
         }
+
+        val invalidOptions =
+            command("opt") {
+                stringOption("reason", "r")
+                stringOption("rename", "r")
+                execute { }
+            }
+
+        assertThrows<IllegalArgumentException> {
+            invalidOptions.compiled
+        }
     }
 
     @Test
@@ -224,15 +349,21 @@ class DaisyCommandsTest {
 
                 sub("create") {
                     playerOnly()
-                    cooldown(java.time.Duration.ofSeconds(30))
-                    executePlayer { }
+                    executePlayer {
+                        reply("Island created for ${player.name}.")
+                    }
                 }
 
                 sub("invite") {
                     permission("island.invite")
                     val target = player("target")
+                    val silent = flag("silent", "s")
+                    val note = textOption("note").optional()
+
                     executePlayer {
-                        target().name
+                        if (silent()) {
+                            reply("Silent invite for ${target().name}: ${note() ?: "No note"}")
+                        }
                     }
                 }
             }
@@ -245,14 +376,16 @@ class DaisyCommandsTest {
         players: List<Player> = emptyList(),
         worlds: List<World> = emptyList(),
         offlinePlayers: List<OfflinePlayer> = emptyList(),
+        config: DaisyConfig = DaisyConfig(messages = DaisyMessages().apply { prefix = "" }),
     ): CommandRuntime =
         CommandRuntime(
             logger = Logger.getLogger("DaisyCommandsTest"),
+            config = config,
             platform =
                 object : DaisyPlatform {
                     private val playerMap = players.associateBy { it.name.lowercase() }
                     private val worldMap = worlds.associateBy { it.name.lowercase() }
-                    private val offlineMap = offlinePlayers.associateBy { it.name!!.lowercase() }
+                    private val offlineMap = offlinePlayers.associateBy { (it.name ?: "").lowercase() }
 
                     override fun findPlayer(name: String): Player? = playerMap[name.lowercase()]
 
@@ -284,7 +417,7 @@ class DaisyCommandsTest {
             null
         }.`when`(player).sendMessage(any(Component::class.java))
 
-        player.setMetadataMessages(messages)
+        messageStore[player] = messages
         return player
     }
 
@@ -304,28 +437,11 @@ class DaisyCommandsTest {
             null
         }.`when`(sender).sendMessage(any(Component::class.java))
 
-        sender.setMetadataMessages(messages)
+        messageStore[sender] = messages
         return sender
     }
 
-    private fun sentMessages(sender: Any): List<String> =
-        when (sender) {
-            is Player -> sender.metadataMessages()
-            is CommandSender -> sender.metadataMessages()
-            else -> emptyList()
-        }
-
-    private fun CommandSender.metadataMessages(): List<String> = messageStore[this] ?: emptyList()
-
-    private fun CommandSender.setMetadataMessages(messages: MutableList<String>) {
-        messageStore[this] = messages
-    }
-
-    private fun Player.metadataMessages(): List<String> = messageStore[this] ?: emptyList()
-
-    private fun Player.setMetadataMessages(messages: MutableList<String>) {
-        messageStore[this] = messages
-    }
+    private fun sentMessages(sender: Any): List<String> = messageStore[sender] ?: emptyList()
 
     companion object {
         private val messageStore = mutableMapOf<Any, MutableList<String>>()
