@@ -1,526 +1,419 @@
+@file:Suppress("unused", "UNCHECKED_CAST")
+
 package cat.daisy.command.dsl
 
-import cat.daisy.command.arguments.ArgParser
-import cat.daisy.command.arguments.ArgumentDef
+import cat.daisy.command.arguments.ArgumentKind
+import cat.daisy.command.arguments.ArgumentRef
+import cat.daisy.command.arguments.CompiledArgument
+import cat.daisy.command.arguments.DaisyParser
+import cat.daisy.command.arguments.MutableArgumentDefinition
+import cat.daisy.command.arguments.Parsers
 import cat.daisy.command.context.CommandContext
-import cat.daisy.command.context.PlayerContext
-import cat.daisy.command.context.TabContext
-import cat.daisy.command.core.DaisyCommand
-import cat.daisy.command.core.DaisyCommands
-import cat.daisy.command.core.SubCommand
-import cat.daisy.command.core.SubCommandData
+import cat.daisy.command.context.ConsoleCommandContext
+import cat.daisy.command.context.PlayerCommandContext
+import cat.daisy.command.core.AnyHandler
+import cat.daisy.command.core.CommandNodeSpec
+import cat.daisy.command.core.CommandSpec
+import cat.daisy.command.core.ConsoleHandler
+import cat.daisy.command.core.CooldownSpec
+import cat.daisy.command.core.DaisyConfig
+import cat.daisy.command.core.DaisyConfigBuilder
+import cat.daisy.command.core.HandlerSpec
+import cat.daisy.command.core.PlayerHandler
+import cat.daisy.command.core.RequirementSpec
+import cat.daisy.command.core.SenderConstraint
+import java.time.Duration
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// DSL ENTRY POINTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Create and register a command using the DSL.
- */
-inline fun daisyCommand(
+fun command(
     name: String,
-    block: DaisyCommandBuilder.() -> Unit,
-): DaisyCommand = DaisyCommandBuilder(name).apply(block).build().also { DaisyCommands.register(it) }
+    block: CommandBuilder.() -> Unit,
+): CommandSpec = CommandBuilder(name, root = true).apply(block).build()
 
-/**
- * Build a command without registering it.
- */
-inline fun buildCommand(
-    name: String,
-    block: DaisyCommandBuilder.() -> Unit,
-): DaisyCommand = DaisyCommandBuilder(name).apply(block).build()
+class CommandSetBuilder {
+    private val commands = mutableListOf<CommandSpec>()
+    private val configBuilder = DaisyConfigBuilder()
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMMAND BUILDER
-// ═══════════════════════════════════════════════════════════════════════════════
+    fun command(
+        name: String,
+        block: CommandBuilder.() -> Unit,
+    ) {
+        commands +=
+            cat.daisy.command.dsl
+                .command(name, block)
+    }
 
-/**
- * Builder for creating DaisyCommand instances.
- * Supports both Kotlin DSL and Java fluent API.
- */
-class DaisyCommandBuilder(
+    fun add(command: CommandSpec) {
+        commands += command
+    }
+
+    fun config(block: DaisyConfigBuilder.() -> Unit) {
+        configBuilder.apply(block)
+    }
+
+    internal fun build(): BuiltCommandSet = BuiltCommandSet(commands.toList(), configBuilder.build())
+}
+
+internal data class BuiltCommandSet(
+    val commands: List<CommandSpec>,
+    val config: DaisyConfig,
+)
+
+class CommandBuilder internal constructor(
     private val name: String,
+    private val root: Boolean,
 ) {
-    @JvmField var description: String = ""
+    private var description: String = ""
+    private var permission: String? = null
+    private var aliases: MutableList<String> = mutableListOf()
+    private var senderConstraint: SenderConstraint = SenderConstraint.ANY
+    private var cooldown: CooldownSpec? = null
+    private var handler: HandlerSpec? = null
+    private val requirements = mutableListOf<RequirementSpec>()
+    private val children = mutableListOf<CommandBuilder>()
+    private val arguments = mutableListOf<MutableArgumentDefinition>()
 
-    @JvmField var usage: String = "/$name"
-
-    @JvmField var permission: String? = null
-
-    @JvmField var aliases: Array<String> = emptyArray()
-
-    @JvmField var playerOnly: Boolean = false
-
-    @JvmField var cooldown: Int = 0
-
-    @JvmField var cooldownMessage: String? = null
-
-    @JvmField var cooldownBypassPermission: String? = null
-
-    @PublishedApi internal val subcommands = mutableListOf<SubCommandData>()
-
-    @PublishedApi internal val arguments = mutableListOf<ArgumentDef>()
-
-    @PublishedApi internal var executor: (CommandContext.() -> Unit)? = null
-
-    @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // JAVA-FRIENDLY SETTERS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun setDescription(value: String) = apply { description = value }
-
-    fun setUsage(value: String) = apply { usage = value }
-
-    fun setPermission(value: String?) = apply { permission = value }
-
-    fun setAliases(vararg names: String) = apply { aliases = names.toList().toTypedArray() }
-
-    fun setPlayerOnly(value: Boolean) = apply { playerOnly = value }
-
-    fun setCooldown(seconds: Int) = apply { cooldown = seconds }
-
-    fun setCooldownMessage(value: String?) = apply { cooldownMessage = value }
-
-    fun setCooldownBypassPermission(value: String?) = apply { cooldownBypassPermission = value }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // KOTLIN DSL METHODS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun withAliases(vararg names: String) {
-        aliases = names.toList().toTypedArray()
+    fun description(text: String) {
+        description = text
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ARGUMENT DEFINITIONS
-    // ─────────────────────────────────────────────────────────────────────────
+    fun aliases(vararg values: String) {
+        aliases = values.toMutableList()
+    }
 
-    fun stringArgument(
-        name: String,
-        optional: Boolean = false,
+    fun permission(nodePermission: String) {
+        permission = nodePermission
+    }
+
+    fun playerOnly() {
+        senderConstraint = SenderConstraint.PLAYER_ONLY
+    }
+
+    fun consoleOnly() {
+        senderConstraint = SenderConstraint.CONSOLE_ONLY
+    }
+
+    fun cooldown(
+        duration: Duration,
+        bypassPermission: String? = null,
+        message: String? = null,
     ) {
-        arguments += ArgumentDef.StringArg(name, optional)
+        cooldown = CooldownSpec(duration, bypassPermission, message)
     }
 
-    fun greedyStringArgument(
-        name: String,
-        optional: Boolean = false,
+    fun requires(
+        message: String? = null,
+        predicate: CommandContext.() -> Boolean,
     ) {
-        arguments += ArgumentDef.GreedyStringArg(name, optional)
+        requirements += RequirementSpec(message, predicate)
     }
 
-    fun intArgument(
+    fun sub(
+        name: String,
+        block: CommandBuilder.() -> Unit,
+    ) {
+        children += CommandBuilder(name, root = false).apply(block)
+    }
+
+    fun execute(block: CommandContext.() -> Unit) {
+        setHandler(AnyHandler(block))
+    }
+
+    fun executePlayer(block: PlayerCommandContext.() -> Unit) {
+        playerOnly()
+        setHandler(PlayerHandler(block))
+    }
+
+    fun executeConsole(block: ConsoleCommandContext.() -> Unit) {
+        consoleOnly()
+        setHandler(ConsoleHandler(block))
+    }
+
+    fun string(
+        name: String,
+        block: ArgumentRef<String>.() -> Unit = {},
+    ): ArgumentRef<String> = positional(name, Parsers.STRING, block)
+
+    fun text(
+        name: String,
+        block: ArgumentRef<String>.() -> Unit = {},
+    ): ArgumentRef<String> = positional(name, Parsers.TEXT, block)
+
+    fun int(
         name: String,
         min: Int = Int.MIN_VALUE,
         max: Int = Int.MAX_VALUE,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.IntArg(name, min, max, optional)
-    }
+        block: ArgumentRef<Int>.() -> Unit = {},
+    ): ArgumentRef<Int> = positional(name, Parsers.int(min, max), block)
 
-    fun longArgument(
+    fun long(
         name: String,
         min: Long = Long.MIN_VALUE,
         max: Long = Long.MAX_VALUE,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.LongArg(name, min, max, optional)
-    }
+        block: ArgumentRef<Long>.() -> Unit = {},
+    ): ArgumentRef<Long> = positional(name, Parsers.long(min, max), block)
 
-    fun doubleArgument(
+    fun double(
         name: String,
-        min: Double = Double.MIN_VALUE,
-        max: Double = Double.MAX_VALUE,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.DoubleArg(name, min, max, optional)
-    }
+        min: Double = Double.NEGATIVE_INFINITY,
+        max: Double = Double.POSITIVE_INFINITY,
+        block: ArgumentRef<Double>.() -> Unit = {},
+    ): ArgumentRef<Double> = positional(name, Parsers.double(min, max), block)
 
-    fun floatArgument(
+    fun float(
         name: String,
-        min: Float = Float.MIN_VALUE,
-        max: Float = Float.MAX_VALUE,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.FloatArg(name, min, max, optional)
-    }
+        min: Float = Float.NEGATIVE_INFINITY,
+        max: Float = Float.POSITIVE_INFINITY,
+        block: ArgumentRef<Float>.() -> Unit = {},
+    ): ArgumentRef<Float> = positional(name, Parsers.float(min, max), block)
 
-    fun booleanArgument(
+    fun boolean(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.BooleanArg(name, optional)
-    }
+        block: ArgumentRef<Boolean>.() -> Unit = {},
+    ): ArgumentRef<Boolean> = positional(name, Parsers.BOOLEAN, block)
 
-    fun playerArgument(
+    fun player(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.PlayerArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.entity.Player>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.entity.Player> = positional(name, Parsers.PLAYER, block)
 
-    fun offlinePlayerArgument(
+    fun offlinePlayer(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.OfflinePlayerArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.OfflinePlayer>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.OfflinePlayer> = positional(name, Parsers.OFFLINE_PLAYER, block)
 
-    fun worldArgument(
+    fun world(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.WorldArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.World>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.World> = positional(name, Parsers.WORLD, block)
 
-    fun materialArgument(
+    fun material(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.MaterialArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.Material>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.Material> = positional(name, Parsers.MATERIAL, block)
 
-    fun gameModeArgument(
+    fun gameMode(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.GameModeArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.GameMode>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.GameMode> = positional(name, Parsers.GAME_MODE, block)
 
-    fun entityTypeArgument(
+    fun entityType(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.EntityTypeArg(name, optional)
-    }
+        block: ArgumentRef<org.bukkit.entity.EntityType>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.entity.EntityType> = positional(name, Parsers.ENTITY_TYPE, block)
 
-    fun uuidArgument(
+    fun uuid(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.UUIDArg(name, optional)
-    }
+        block: ArgumentRef<java.util.UUID>.() -> Unit = {},
+    ): ArgumentRef<java.util.UUID> = positional(name, Parsers.UUID_PARSER, block)
 
-    fun durationArgument(
+    fun duration(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.DurationArg(name, optional)
-    }
+        block: ArgumentRef<Duration>.() -> Unit = {},
+    ): ArgumentRef<Duration> = positional(name, Parsers.DURATION, block)
 
-    fun choiceArgument(
+    fun choice(
         name: String,
-        vararg choices: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
-    }
+        vararg options: String,
+        block: ArgumentRef<String>.() -> Unit = {},
+    ): ArgumentRef<String> = positional(name, Parsers.choice(*options), block)
 
-    inline fun <reified E : Enum<E>> enumArgument(
+    inline fun <reified E : Enum<E>> enum(
         name: String,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
-    }
+        noinline block: ArgumentRef<E>.() -> Unit = {},
+    ): ArgumentRef<E> = positionalPublished(name, Parsers.enum(), block)
 
-    fun <T> customArgument(
+    fun <T> argument(
         name: String,
-        parser: ArgParser<T>,
-        optional: Boolean = false,
-    ) {
-        arguments += ArgumentDef.CustomArg(name, parser, optional)
+        parser: DaisyParser<T>,
+        block: ArgumentRef<T>.() -> Unit = {},
+    ): ArgumentRef<T> = positional(name, parser, block)
+
+    fun flag(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<Boolean>.() -> Unit = {},
+    ): ArgumentRef<Boolean> = optionInternal(longName, Parsers.BOOLEAN, shortName, ArgumentKind.FLAG, block)
+
+    fun stringOption(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<String>.() -> Unit = {},
+    ): ArgumentRef<String> = optionInternal(longName, Parsers.STRING, shortName, ArgumentKind.OPTION, block)
+
+    fun textOption(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<String>.() -> Unit = {},
+    ): ArgumentRef<String> = optionInternal(longName, Parsers.OPTION_TEXT, shortName, ArgumentKind.OPTION, block)
+
+    fun intOption(
+        longName: String,
+        shortName: String? = null,
+        min: Int = Int.MIN_VALUE,
+        max: Int = Int.MAX_VALUE,
+        block: ArgumentRef<Int>.() -> Unit = {},
+    ): ArgumentRef<Int> = optionInternal(longName, Parsers.int(min, max), shortName, ArgumentKind.OPTION, block)
+
+    fun longOption(
+        longName: String,
+        shortName: String? = null,
+        min: Long = Long.MIN_VALUE,
+        max: Long = Long.MAX_VALUE,
+        block: ArgumentRef<Long>.() -> Unit = {},
+    ): ArgumentRef<Long> = optionInternal(longName, Parsers.long(min, max), shortName, ArgumentKind.OPTION, block)
+
+    fun doubleOption(
+        longName: String,
+        shortName: String? = null,
+        min: Double = Double.NEGATIVE_INFINITY,
+        max: Double = Double.POSITIVE_INFINITY,
+        block: ArgumentRef<Double>.() -> Unit = {},
+    ): ArgumentRef<Double> = optionInternal(longName, Parsers.double(min, max), shortName, ArgumentKind.OPTION, block)
+
+    fun floatOption(
+        longName: String,
+        shortName: String? = null,
+        min: Float = Float.NEGATIVE_INFINITY,
+        max: Float = Float.POSITIVE_INFINITY,
+        block: ArgumentRef<Float>.() -> Unit = {},
+    ): ArgumentRef<Float> = optionInternal(longName, Parsers.float(min, max), shortName, ArgumentKind.OPTION, block)
+
+    fun booleanOption(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<Boolean>.() -> Unit = {},
+    ): ArgumentRef<Boolean> = optionInternal(longName, Parsers.BOOLEAN, shortName, ArgumentKind.OPTION, block)
+
+    fun playerOption(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<org.bukkit.entity.Player>.() -> Unit = {},
+    ): ArgumentRef<org.bukkit.entity.Player> = optionInternal(longName, Parsers.PLAYER, shortName, ArgumentKind.OPTION, block)
+
+    fun durationOption(
+        longName: String,
+        shortName: String? = null,
+        block: ArgumentRef<Duration>.() -> Unit = {},
+    ): ArgumentRef<Duration> = optionInternal(longName, Parsers.DURATION, shortName, ArgumentKind.OPTION, block)
+
+    fun <T> option(
+        longName: String,
+        parser: DaisyParser<T>,
+        shortName: String? = null,
+        block: ArgumentRef<T>.() -> Unit = {},
+    ): ArgumentRef<T> = optionInternal(longName, parser, shortName, ArgumentKind.OPTION, block)
+
+    internal fun build(): CommandSpec {
+        check(root) { "Only root builders can build a CommandSpec." }
+        return CommandSpec(
+            name = name,
+            description = description,
+            aliases = aliases.toList(),
+            permission = permission,
+            senderConstraint = senderConstraint,
+            cooldown = cooldown,
+            arguments = compileArguments(),
+            requirements = requirements.toList(),
+            children = children.map { it.buildNode() },
+            handler = handler,
+        )
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SUBCOMMANDS
-    // ─────────────────────────────────────────────────────────────────────────
+    private fun buildNode(): CommandNodeSpec =
+        CommandNodeSpec(
+            name = name,
+            description = description,
+            aliases = aliases.toList(),
+            permission = permission,
+            senderConstraint = senderConstraint,
+            cooldown = cooldown,
+            arguments = compileArguments(),
+            requirements = requirements.toList(),
+            children = children.map { it.buildNode() },
+            handler = handler,
+        )
 
-    inline fun subcommand(
-        subName: String,
-        block: SubCommandBuilder.() -> Unit,
-    ) {
-        subcommands += SubCommandBuilder(subName).apply(block).build()
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // EXECUTION
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun onExecute(block: CommandContext.() -> Unit) {
-        executor = block
-    }
-
-    fun playerExecutor(block: PlayerContext.() -> Unit) {
-        playerOnly = true
-        executor = { asPlayer()?.let { PlayerContext(it, args, namedArgs, label).block() } }
-    }
-
-    fun tabComplete(block: TabContext.() -> List<String>) {
-        tabProvider = block
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // BUILD
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @PublishedApi
-    internal fun build(): DaisyCommand {
-        val cmd =
-            DaisyCommand(
-                name,
-                description,
-                usage,
-                permission,
-                aliases,
-                playerOnly,
-                cooldown,
-                cooldownMessage,
-                cooldownBypassPermission,
-                arguments.toList(),
-            )
-
-        subcommands.forEach { data ->
-            cmd.addSubcommand(
-                data.name,
-                SubCommand(
-                    data.name,
-                    data.description,
-                    data.permission,
-                    data.playerOnly,
-                    data.cooldown,
-                    data.cooldownMessage,
-                    data.cooldownBypassPermission,
-                    data.aliases,
-                    data.arguments,
-                    data.subcommands,
-                    data.executor,
-                    data.tabProvider,
-                ),
+    private fun compileArguments(): List<CompiledArgument> =
+        arguments.map {
+            CompiledArgument(
+                slot = it.slot,
+                name = it.name,
+                parser = it.parser,
+                kind = it.kind,
+                longName = it.longName,
+                shortName = it.shortName,
+                optional = it.optional,
+                hasDefault = it.defaultValue !== cat.daisy.command.arguments.NoDefaultValue,
+                defaultValue = it.defaultValue,
+                description = it.description,
+                suggestions = it.suggestions,
+                validatorMessage = it.validatorMessage,
+                validator = it.validator,
             )
         }
 
-        executor?.let { cmd.onExecute(it) }
-        tabProvider?.let { cmd.tabComplete(it) }
-        return cmd
+    private fun setHandler(value: HandlerSpec) {
+        check(handler == null) { "Node '$name' already has an execution handler." }
+        handler = value
+    }
+
+    private fun <T> positional(
+        name: String,
+        parser: DaisyParser<T>,
+        block: ArgumentRef<T>.() -> Unit,
+    ): ArgumentRef<T> =
+        createArgument(
+            name = name,
+            parser = parser,
+            kind = ArgumentKind.POSITIONAL,
+            longName = null,
+            shortName = null,
+            block = block,
+        )
+
+    @PublishedApi
+    internal fun <T> positionalPublished(
+        name: String,
+        parser: DaisyParser<T>,
+        block: ArgumentRef<T>.() -> Unit,
+    ): ArgumentRef<T> = positional(name, parser, block)
+
+    private fun <T> optionInternal(
+        longName: String,
+        parser: DaisyParser<T>,
+        shortName: String?,
+        kind: ArgumentKind,
+        block: ArgumentRef<T>.() -> Unit,
+    ): ArgumentRef<T> =
+        createArgument(
+            name = longName,
+            parser = parser,
+            kind = kind,
+            longName = longName,
+            shortName = shortName,
+            block = block,
+        )
+
+    private fun <T> createArgument(
+        name: String,
+        parser: DaisyParser<T>,
+        kind: ArgumentKind,
+        longName: String?,
+        shortName: String?,
+        block: ArgumentRef<T>.() -> Unit,
+    ): ArgumentRef<T> {
+        val definition =
+            MutableArgumentDefinition(
+                slot = arguments.size,
+                name = name,
+                parser = parser as DaisyParser<Any?>,
+                kind = kind,
+                longName = longName,
+                shortName = shortName,
+            )
+        val ref = ArgumentRef<T>(definition, name)
+        arguments += definition
+        ref.apply(block)
+        return ref
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SUBCOMMAND BUILDER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Builder for creating SubCommand instances.
- */
-class SubCommandBuilder
-    @PublishedApi
-    internal constructor(
-        private val name: String,
-    ) {
-        var description: String = ""
-        var permission: String? = null
-        var playerOnly: Boolean = false
-        var cooldown: Int = 0
-        var cooldownMessage: String? = null
-        var cooldownBypassPermission: String? = null
-        var aliases: List<String> = emptyList()
-
-        @PublishedApi internal val arguments = mutableListOf<ArgumentDef>()
-
-        @PublishedApi internal val subcommands = mutableListOf<SubCommandData>()
-
-        @PublishedApi internal var executor: (CommandContext.() -> Unit) = {}
-
-        @PublishedApi internal var tabProvider: (TabContext.() -> List<String>)? = null
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // ARGUMENT DEFINITIONS
-        // ─────────────────────────────────────────────────────────────────────────
-
-        fun stringArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.StringArg(name, optional)
-        }
-
-        fun greedyStringArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.GreedyStringArg(name, optional)
-        }
-
-        fun intArgument(
-            name: String,
-            min: Int = Int.MIN_VALUE,
-            max: Int = Int.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.IntArg(name, min, max, optional)
-        }
-
-        fun longArgument(
-            name: String,
-            min: Long = Long.MIN_VALUE,
-            max: Long = Long.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.LongArg(name, min, max, optional)
-        }
-
-        fun doubleArgument(
-            name: String,
-            min: Double = Double.MIN_VALUE,
-            max: Double = Double.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.DoubleArg(name, min, max, optional)
-        }
-
-        fun floatArgument(
-            name: String,
-            min: Float = Float.MIN_VALUE,
-            max: Float = Float.MAX_VALUE,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.FloatArg(name, min, max, optional)
-        }
-
-        fun booleanArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.BooleanArg(name, optional)
-        }
-
-        fun playerArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.PlayerArg(name, optional)
-        }
-
-        fun offlinePlayerArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.OfflinePlayerArg(name, optional)
-        }
-
-        fun worldArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.WorldArg(name, optional)
-        }
-
-        fun materialArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.MaterialArg(name, optional)
-        }
-
-        fun gameModeArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.GameModeArg(name, optional)
-        }
-
-        fun entityTypeArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.EntityTypeArg(name, optional)
-        }
-
-        fun uuidArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.UUIDArg(name, optional)
-        }
-
-        fun durationArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.DurationArg(name, optional)
-        }
-
-        fun choiceArgument(
-            name: String,
-            vararg choices: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.ChoiceArg(name, choices.toList(), optional)
-        }
-
-        inline fun <reified E : Enum<E>> enumArgument(
-            name: String,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.EnumArg(name, E::class.java, optional)
-        }
-
-        fun <T> customArgument(
-            name: String,
-            parser: ArgParser<T>,
-            optional: Boolean = false,
-        ) {
-            arguments += ArgumentDef.CustomArg(name, parser, optional)
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // SUBCOMMANDS
-        // ─────────────────────────────────────────────────────────────────────────
-
-        inline fun subcommand(
-            subName: String,
-            block: SubCommandBuilder.() -> Unit,
-        ) {
-            subcommands += SubCommandBuilder(subName).apply(block).build()
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // EXECUTION
-        // ─────────────────────────────────────────────────────────────────────────
-
-        fun onExecute(block: CommandContext.() -> Unit) {
-            executor = block
-        }
-
-        fun playerExecutor(block: PlayerContext.() -> Unit) {
-            playerOnly = true
-            executor = { asPlayer()?.let { PlayerContext(it, args, namedArgs, label).block() } }
-        }
-
-        fun tabComplete(block: TabContext.() -> List<String>) {
-            tabProvider = block
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // BUILD
-        // ─────────────────────────────────────────────────────────────────────────
-
-        @PublishedApi
-        internal fun build() =
-            SubCommandData(
-                name,
-                description,
-                permission,
-                playerOnly,
-                cooldown,
-                cooldownMessage,
-                cooldownBypassPermission,
-                aliases,
-                arguments.toList(),
-                subcommands.toList(),
-                executor,
-                tabProvider,
-            )
-    }
