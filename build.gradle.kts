@@ -29,7 +29,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
-    testImplementation("org.mockito:mockito-core:5.20.0")
+    testImplementation("org.mockito:mockito-core:5.23.0")
     testImplementation("io.papermc.paper:paper-api:${versions["paperApi"]}")
 
     ktlint("com.pinterest.ktlint:ktlint-cli:${versions["ktlint"]}") {
