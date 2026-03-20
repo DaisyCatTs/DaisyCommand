@@ -1,102 +1,64 @@
-# Migrating From DaisyCommands 1.x To 2.0
+# Migrating From DaisyCommands 2.x To 3.0
 
-DaisyCommands 2.0 keeps the same core goal, a clean Kotlin command framework for Paper, but the mechanics changed in deliberate ways. This guide is for existing 1.x users who need to move to the new registration model, typed argument flow, and 2.0-first DSL.
+DaisyCommands 3.0 is a cleanup release focused on one thing: a Kotlin-only, Paper-first command API with one obvious DSL. If you are upgrading from 2.x, this guide covers the main breaking changes and the new preferred patterns.
 
-## What Changed In 2.0
+## What Changed In 3.0
 
-- DaisyCommands is now Paper-only.
-- Commands are registered through `JavaPlugin.registerCommands(...)`.
-- The runtime model is compiled and immutable.
-- Typed `ArgumentRef<T>` values are the preferred way to access parsed arguments.
-- Help, usage, sender constraints, and cooldown handling are built into the compiled command pipeline.
-- Old builder-style entrypoints still exist as deprecated compatibility shims.
+- DaisyCommands is now explicitly Kotlin-only in public API design and documentation.
+- Legacy compatibility APIs were removed from the main artifact.
+- String-key argument access was removed from execution contexts.
+- Flags and options are now first-class alongside positional arguments.
+- Message customization moved to `registerCommands { config { ... } }`.
+- The repository branding is now `DaisyCatTs/DaisyCommand`.
+- Package namespace and current published coordinates stay stable for now.
 
 ## Upgrade Checklist
 
-- Replace `DaisyCommands.initialize(...)` plus implicit registration with `registerCommands(...)`.
-- Convert `subcommand(...)` calls to `sub(...)`.
-- Convert `onExecute { ... }` to `execute { ... }`.
-- Convert `playerExecutor { ... }` to `executePlayer { ... }`.
-- Move new code away from string-key-first argument access toward `ArgumentRef<T>`.
-- Review your plugin assumptions around Paper-only support.
-- Remove any dependency on the old runtime registration model beyond the deprecated shims.
+- Replace any legacy command builders with `command(name) { ... }`.
+- Replace string-key getters with typed `ArgumentRef<T>` values.
+- Move registration to `registerCommands(...)` or `registerCommands { ... }`.
+- Convert optional values to `optional()` or `default(...)`.
+- Move message customization into registration config.
+- Adopt flags and options where they remove positional boilerplate.
+- Review plugin assumptions for Paper `1.21.11` and Java `21`.
 
-## API Before/After
+## API Before And After
 
 ### Registration
 
 Before:
 
 ```kotlin
-override fun onEnable() {
-    DaisyCommands.initialize(this)
+registerCommands(
+    command("hello") {
+        execute {
+            reply("Hello")
+        }
+    },
+)
+```
 
-    daisyCommand("hello") {
-        onExecute {
+After:
+
+```kotlin
+registerCommands {
+    config {
+        messages {
+            prefix = "<gray>[<yellow>Example</yellow>]</gray> "
+        }
+    }
+
+    command("hello") {
+        execute {
             reply("Hello")
         }
     }
 }
 ```
 
-After:
-
-```kotlin
-override fun onEnable() {
-    registerCommands(
-        command("hello") {
-            execute {
-                reply("Hello")
-            }
-        },
-    )
-}
-```
-
-### Subcommand Declaration
+### Typed Positional Access
 
 Before:
-
-```kotlin
-daisyCommand("island") {
-    subcommand("create") {
-        playerExecutor {
-            reply("Created")
-        }
-    }
-}
-```
-
-After:
-
-```kotlin
-command("island") {
-    sub("create") {
-        executePlayer {
-            reply("Created")
-        }
-    }
-}
-```
-
-### Typed Player Argument
-
-Before:
-
-```kotlin
-daisyCommand("island") {
-    subcommand("invite") {
-        playerArgument("target")
-
-        playerExecutor {
-            val target = getPlayer("target") ?: return@playerExecutor
-            reply("Invited ${target.name}")
-        }
-    }
-}
-```
-
-After:
 
 ```kotlin
 command("island") {
@@ -110,22 +72,24 @@ command("island") {
 }
 ```
 
-### Optional Text Argument
-
-Before:
+After:
 
 ```kotlin
-daisyCommand("mail") {
-    greedyStringArgument("message", optional = true)
+command("island") {
+    sub("invite") {
+        val target = player("target")
+        val silent = flag("silent", "s")
 
-    onExecute {
-        val message = getString("message") ?: "Empty"
-        reply(message)
+        executePlayer {
+            islandService.invite(player, target(), silent())
+        }
     }
 }
 ```
 
-After:
+### Optional And Defaulted Values
+
+Before:
 
 ```kotlin
 command("mail") {
@@ -137,98 +101,108 @@ command("mail") {
 }
 ```
 
-### Cooldown Declaration
+After:
+
+```kotlin
+command("mail") {
+    val message = text("message").optional()
+    val mode = choice("mode", "normal", "priority").default("normal")
+
+    executePlayer {
+        reply("${mode()}: ${message() ?: "Empty"}")
+    }
+}
+```
+
+### Flags And Options
 
 Before:
 
 ```kotlin
-daisyCommand("heal") {
-    cooldown = 30
-    cooldownBypassPermission = "myplugin.heal.bypass"
-
-    playerExecutor {
-        reply("Healed")
-    }
+command("ban") {
+    val target = player("target")
+    executePlayer { }
 }
 ```
 
 After:
 
 ```kotlin
-command("heal") {
-    cooldown(
-        java.time.Duration.ofSeconds(30),
-        bypassPermission = "myplugin.heal.bypass",
-    )
+command("ban") {
+    val target = player("target")
+    val reason = stringOption("reason", "r").default("No reason")
+    val silent = flag("silent", "s")
 
     executePlayer {
-        reply("Healed")
+        moderationService.ban(player, target(), reason(), silent())
     }
 }
 ```
 
 ## Registration Changes
 
-In 1.x, registration was centered around `DaisyCommands.initialize(...)` and compatibility-style command creation. In 2.0, the preferred path is explicit Paper registration from your plugin class:
+The two supported registration paths are:
 
 ```kotlin
 registerCommands(
     command("example") {
-        execute {
-            reply("Ready")
-        }
+        execute { }
     },
 )
 ```
 
-You can also use the builder form:
-
 ```kotlin
 registerCommands {
-    command("example") {
-        execute {
-            reply("Ready")
+    config {
+        messages {
+            prefix = "<gray>[<yellow>Example</yellow>]</gray> "
         }
+    }
+
+    command("example") {
+        execute { }
     }
 }
 ```
 
+Use the builder form when you want framework-wide message or theme customization.
+
 ## Arguments And Typed Access
 
-The main conceptual shift is that 2.0 wants you to define argument refs during DSL construction and resolve them inside the handler:
+3.0 expects you to define refs during DSL construction and resolve them directly inside handlers:
 
 ```kotlin
 command("warp") {
     val target = player("target")
-    val note = text("note").optional()
+    val expires = durationOption("expires", "e").optional()
 
     executePlayer {
-        val message = note() ?: "No note"
-        reply("Warping ${target().name}: $message")
+        reply("Warping ${target().name} for ${expires()}.")
     }
 }
 ```
 
-This is the preferred style for new code. String-key getters still exist on the execution context, but they are there to ease migration rather than define the long-term API shape.
+The main pattern is:
 
-## Compatibility Shims
+- required ref -> non-null typed value
+- `optional()` -> nullable typed value
+- `default(value)` -> non-null fallback value
 
-These APIs still exist, but they are deprecated and should be treated as migration helpers:
+## Removed Main-Artifact APIs
 
-- `daisyCommand(...)`
-- `buildCommand(...)`
-- `subcommand(...)`
-- `onExecute { ... }`
-- `playerExecutor { ... }`
-- String-key getters such as `getString("name")`
+These are no longer part of the main 3.0 artifact:
 
-They are retained to reduce upgrade friction, not as the recommended long-term interface for 2.0 code.
+- deprecated compatibility builders from older releases
+- string-key getters like `getString("name")`
+- broad legacy execution helpers that duplicated the typed-ref flow
+
+The 3.0 API is intentionally narrower so plugin authors have one clear way to write commands.
 
 ## Breaking Changes Summary
 
-- Paper-only target.
-- New `registerCommands(...)` registration path.
-- Immutable compiled command model.
-- Typed refs are now the preferred argument access style.
-- Old builder-shaped entrypoints are deprecated.
-- Official docs and examples now assume the 2.0 DSL first.
+- Kotlin-only public API direction
+- Paper `1.21.11` target
+- legacy compatibility APIs removed from the main artifact
+- string-key argument access removed
+- flags and options added as first-class syntax
+- docs and examples now assume the 3.0 DSL only

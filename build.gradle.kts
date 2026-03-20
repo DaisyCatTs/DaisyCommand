@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "com.github.fu3i0n"
-version = "2.0.0"
+version = "3.0.0"
 
 repositories {
     mavenCentral()
@@ -18,7 +18,7 @@ repositories {
 
 val versions =
     mapOf(
-        "paperApi" to "1.21.10-R0.1-SNAPSHOT",
+        "paperApi" to "1.21.11-R0.1-SNAPSHOT",
         "kotlin" to "2.3.20",
         "ktlint" to "1.8.0",
     )
