@@ -3,13 +3,13 @@
 val ktlint by configurations.creating
 
 plugins {
-    kotlin("jvm") version "2.3.0"
+    kotlin("jvm") version "2.3.20"
     `maven-publish`
     `java-library`
 }
 
 group = "com.github.fu3i0n"
-version = "1.0.0"
+version = "3.0.0"
 
 repositories {
     mavenCentral()
@@ -18,14 +18,19 @@ repositories {
 
 val versions =
     mapOf(
-        "paperApi" to "1.21.10-R0.1-SNAPSHOT",
-        "kotlin" to "2.3.0",
+        "paperApi" to "1.21.11-R0.1-SNAPSHOT",
+        "kotlin" to "2.3.20",
         "ktlint" to "1.8.0",
     )
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:${versions["paperApi"]}")
     compileOnly("org.jetbrains.kotlin:kotlin-stdlib-jdk8:${versions["kotlin"]}")
+
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+    testImplementation("org.mockito:mockito-core:5.20.0")
+    testImplementation("io.papermc.paper:paper-api:${versions["paperApi"]}")
 
     ktlint("com.pinterest.ktlint:ktlint-cli:${versions["ktlint"]}") {
         attributes {
@@ -62,7 +67,7 @@ val ktlintCheck by tasks.registering(JavaExec::class) {
 
 tasks {
     check {
-        dependsOn("ktlintFormat")
+        dependsOn(ktlintCheck)
     }
 
     register<JavaExec>("ktlintFormat") {
@@ -74,17 +79,8 @@ tasks {
         args("-F", "**/src/**/*.kt", "**.kts", "!**/build/**")
     }
 
-    val jarDir = layout.projectDirectory.dir("Jar")
-    val projectVersion = version.toString()
-
-    register<Copy>("copyToJar") {
-        from(jar)
-        into(jarDir)
-        rename { "DaisyCommand-$projectVersion.jar" }
-    }
-
-    build {
-        finalizedBy("copyToJar")
+    test {
+        useJUnitPlatform()
     }
 }
 
